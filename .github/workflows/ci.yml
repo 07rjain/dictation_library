@@ -22,11 +22,15 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      - run: npm ci
-      - run: npm test
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run deterministic regression suite
+        run: npm run test:regression
       - if: matrix.node-version == 22
         name: Verify long-audio routing above 25 MiB and 100 MiB
         run: npm run benchmark:long
-      - run: npm audit --audit-level=high
+      - name: Audit production dependencies
+        run: npm audit --audit-level=high
       - if: matrix.node-version == 20
+        name: Verify public package contents
         run: npm pack --dry-run --cache /tmp/npm-release-cache

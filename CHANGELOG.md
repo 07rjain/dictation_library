@@ -11,6 +11,7 @@ All notable changes to this project will be documented here. This project follow
 ### Testing
 
 - Expanded deterministic coverage for completed-job reuse, manifest isolation, cleanup windowing, sequential context, temporary-storage cleanup, Batch lifecycle and validation, and file-store safety.
+- Added an explicit `test:regression` GitHub Actions gate on every push and pull request for Node.js 20 and 22.
 
 ## [0.3.0] - 2026-08-09
 

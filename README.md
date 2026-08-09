@@ -130,6 +130,8 @@ Configuration precedence is: per-call flat compatibility options, per-call neste
 ```bash
 npm install
 npm test
+# Equivalent explicit CI gate:
+npm run test:regression
 npm run benchmark:long
 npm audit --omit=dev
 npm pack --dry-run
