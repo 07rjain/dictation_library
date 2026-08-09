@@ -3,6 +3,8 @@ import { GroqBatchClient } from "./batch.js";
 import { LongJob } from "./long/job.js";
 import { MemoryJobStore } from "./long/store.js";
 import { routeAudio } from "./router.js";
+import { LiveConversationSession } from "./live-session.js";
+import type { LiveConversationOptions } from "./live-session.js";
 import type {
   AudioInput,
   CleanupOptions,
@@ -94,6 +96,11 @@ export class DictationPipeline {
 
   async cleanup(transcript: string, options: CleanupOptions = {}) {
     return this.groq.cleanup(transcript, options);
+  }
+
+  /** Start near-live transcription for independently playable microphone windows. */
+  startLiveConversation(options: LiveConversationOptions = {}): LiveConversationSession {
+    return new LiveConversationSession(this.groq, options);
   }
 
   /** Create a resumable, observable job for long audio. Existing dictate() behavior is unchanged. */

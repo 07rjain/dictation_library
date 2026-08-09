@@ -37,13 +37,17 @@ const pipeline = new DictationPipeline({
 });
 
 if (audioPath) {
-  const result = await pipeline.dictate(audio, {
+  const session = pipeline.startLiveConversation({
     language: "en",
     context: { appName: "Live smoke test", fieldType: "document" },
   });
+  const partial = await session.push(audio);
+  const result = await session.finish();
   if (verifyKnownFixture) assertExpectedFixture(result.rawTranscript, result.text);
   console.log(JSON.stringify({
+    mode: "near-live-window",
     fixture: audioPath,
+    partialTranscript: partial.transcript,
     rawTranscript: result.rawTranscript,
     cleanedText: result.text,
     transcriptionModel: result.transcriptionModel,

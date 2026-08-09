@@ -4,6 +4,11 @@ All notable changes to this project will be documented here. This project follow
 
 ## [Unreleased]
 
+### Added
+
+- Near-live conversation sessions with ordered partial transcripts, prior-window prompt context, final guarded cleanup, and independently playable browser recording windows.
+- Deterministic live-session coverage plus a secret-backed GitHub Actions smoke test that replays `test.wav` through the live API.
+
 ### Fixed
 
 - Completed resumable jobs now verify the supplied audio source before returning a cached result.

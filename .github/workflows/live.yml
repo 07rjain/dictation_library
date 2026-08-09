@@ -29,5 +29,5 @@ jobs:
       - run: npm ci
       - name: Verify live-test secret exists
         run: test -n "$GROQ_API_KEY"
-      - name: Run live Groq provider smoke test
+      - name: Run near-live conversation smoke test with test.wav
         run: npm run test:live -- test.wav

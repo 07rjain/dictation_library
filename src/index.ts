@@ -1,4 +1,6 @@
 export { BrowserRecorder } from "./browser-recorder.js";
+export { BrowserLiveRecorder } from "./browser-live-recorder.js";
+export type * from "./browser-live-recorder.js";
 export { GroqBatchClient } from "./batch.js";
 export type * from "./batch.js";
 export { inspectAudio } from "./audio.js";
@@ -7,6 +9,8 @@ export type * from "./router.js";
 export { DictationError } from "./errors.js";
 export { GroqClient } from "./groq-client.js";
 export { DictationPipeline, DictationSession } from "./pipeline.js";
+export { LiveConversationSession } from "./live-session.js";
+export type * from "./live-session.js";
 export { LongJob } from "./long/job.js";
 export { MemoryJobStore } from "./long/store.js";
 export { stitchChunks } from "./long/stitcher.js";

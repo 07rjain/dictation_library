@@ -47,11 +47,45 @@ const result = await pipeline.dictate(audio);
 | Short interactive dictation | `pipeline.dictate(audio)` | Fast transcription plus guarded cleanup |
 | Automatic short/long selection | `pipeline.dictateAuto(audio, options)` | Direct below the safety thresholds; codec-aware chunks otherwise |
 | Long, observable, resumable audio | `pipeline.createJob(audio, options)` | Progress events, durable manifests, partial recovery |
+| Near-live conversation | `pipeline.startLiveConversation(options)` | Ordered partial transcripts while new windows are recorded |
 | Transcription without cleanup | `pipeline.transcribe(audio)` | Lower-level Whisper result |
 | Private object already on HTTPS | `pipeline.transcribeUrl(url)` | Provider fetches the signed URL |
 | Deferred bulk work | `pipeline.batches` | Asynchronous Batch lifecycle; not for live dictation |
 
 Use `dictateLong` when you want the long-audio result directly without managing the job object. URL and Batch paths are explicit because storage retention and deletion are application decisions.
+
+### Near-live conversation
+
+[Groq speech-to-text](https://console.groq.com/docs/speech-to-text) currently accepts complete files or URLs rather than a streaming audio WebSocket. `BrowserLiveRecorder` therefore restarts `MediaRecorder` for each independently playable window while `LiveConversationSession` uploads the previous window in parallel with continued recording:
+
+```ts
+import { BrowserLiveRecorder, DictationPipeline } from "groq-dictation-kit";
+
+const pipeline = new DictationPipeline({
+  apiKey,
+  dangerouslyAllowBrowser: true, // BYOK prototypes only; use your server in production
+});
+const session = pipeline.startLiveConversation({
+  language: "en",
+  cleanup: { mode: "dictation" },
+  onEvent(event) {
+    if (event.type === "live.partial") {
+      transcriptElement.textContent = event.chunk.transcript;
+    }
+  },
+});
+const recorder = new BrowserLiveRecorder({
+  windowMs: 10_000,
+  onWindow: (audio) => session.push(audio),
+});
+
+await recorder.start();
+// The user speaks; completed windows are transcribed as recording continues.
+await recorder.stop();
+const final = await session.finish();
+```
+
+The default 10-second window matches Groq's minimum billed audio length. Smaller windows reduce visible latency but increase request count and may cost more. This is near-live micro-batching, not token-by-token streaming; speaker diarization is not inferred by this API.
 
 ## Pipeline
 
@@ -137,7 +171,7 @@ npm audit --omit=dev
 npm pack --dry-run
 ```
 
-`npm test` builds the TypeScript package and runs the deterministic suite without contacting Groq. It covers short transcription and cleanup, configuration precedence, retries/timeouts, codec-safe chunking, overlap stitching, cleanup guards and windows, long-job progress/resume/abort/source matching, storage deletion, Batch lifecycle, adapter permissions, and FFmpeg normalization when FFmpeg is installed.
+`npm test` builds the TypeScript package and runs the deterministic suite without contacting Groq. It covers short and near-live transcription, cumulative partials, configuration precedence, retries/timeouts, codec-safe chunking, overlap stitching, cleanup guards and windows, long-job progress/resume/abort/source matching, storage deletion, Batch lifecycle, adapter permissions, and FFmpeg normalization when FFmpeg is installed.
 
 Use `npm run test:live` only when you intentionally want a real provider request. Live credentials are never required for the deterministic suite.
 
@@ -431,7 +465,7 @@ This can make many provider requests. Review the chunk count and account limits 
 
 The GitHub Actions workflow `Manual 10-minute Groq benchmark` provides the same check using the repository secret. It runs only through `workflow_dispatch` and only when its confirmation input is exactly `RUN_LONG`; ordinary pushes never trigger it.
 
-The repository's `Live Groq smoke test` GitHub Actions workflow runs `test.wav` after every push to `main`. The fixture says “Hello, um, this is a live test,” and the workflow verifies both the raw Whisper transcript and the cleaned result, including removal of the filler word. It reads `GROQ_API_KEY` from GitHub Actions secrets and is intentionally not triggered for pull requests, so forked code cannot access the credential. Because this makes live Groq requests, each `main` push consumes a small amount of the account's quota.
+The repository's `Live Groq smoke test` GitHub Actions workflow replays `test.wav` through `LiveConversationSession` after every push to `main`. GitHub runners have no microphone, so a committed spoken fixture is the reproducible equivalent of one captured live window. The fixture says “Hello, um, this is a live test,” and the workflow verifies the partial, raw, and cleaned results, including removal of the filler word. It reads `GROQ_API_KEY` from GitHub Actions secrets and is intentionally not triggered for pull requests, so forked code cannot access the credential. Because this makes live Groq requests, each `main` push consumes a small amount of the account's quota.
 
 ## Public API
 
@@ -439,6 +473,7 @@ The repository's `Live Groq smoke test` GitHub Actions workflow runs `test.wav` 
 - `DictationSession`: starts context collection before the recording finishes.
 - `GroqClient`: lower-level transcription and cleanup operations.
 - `BrowserRecorder`: microphone capture through the MediaRecorder API.
+- `BrowserLiveRecorder` / `LiveConversationSession`: independently playable microphone windows and ordered near-live partial transcripts.
 - `LongJob`: progress, partial failure, resumption, and results for chunked audio.
 - `WavAudioProcessor` / `VadWavAudioProcessor`: browser-compatible PCM WAV segmentation.
 - `FfmpegAudioProcessor` / `FileJobStore`: Node-only adapters from `groq-dictation-kit/node`.
