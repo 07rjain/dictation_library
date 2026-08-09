@@ -1,7 +1,7 @@
 import {
   BrowserRecorder,
   DictationPipeline,
-} from "https://esm.sh/groq-dictation-kit@0.2.0?bundle&target=es2022";
+} from "https://esm.sh/groq-dictation-kit@0.3.0?bundle&target=es2022";
 
 const elements = {
   apiKey: document.querySelector("#api-key"),
