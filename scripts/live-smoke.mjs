@@ -18,11 +18,13 @@ const mimeTypes = new Map([
 ]);
 
 let audio;
+let verifyKnownFixture = false;
 if (audioPath) {
   const absolutePath = resolve(audioPath);
   const bytes = await readFile(absolutePath);
   const mimeType = mimeTypes.get(extname(absolutePath).toLowerCase()) ?? "application/octet-stream";
   audio = { data: new Blob([bytes], { type: mimeType }), filename: basename(absolutePath) };
+  verifyKnownFixture = basename(absolutePath) === "test.wav";
 } else {
   audio = {
     data: new Blob([createToneWav()], { type: "audio/wav" }),
@@ -33,34 +35,71 @@ if (audioPath) {
 const pipeline = new DictationPipeline({
   apiKey,
 });
-const transcriptionStartedAt = performance.now();
-const transcription = await pipeline.transcribe(audio, { language: "en" });
-const transcriptionMs = performance.now() - transcriptionStartedAt;
-const cleanupStartedAt = performance.now();
-const cleanup = await pipeline.cleanup("hello um this is the groq dictation kit live smoke test", {
-  context: { appName: "Live smoke test", fieldType: "document" },
-});
-const cleanupMs = performance.now() - cleanupStartedAt;
 
-if (!cleanup.text) throw new Error("Live cleanup returned empty text.");
+if (audioPath) {
+  const result = await pipeline.dictate(audio, {
+    language: "en",
+    context: { appName: "Live smoke test", fieldType: "document" },
+  });
+  if (verifyKnownFixture) assertExpectedFixture(result.rawTranscript, result.text);
+  console.log(JSON.stringify({
+    fixture: audioPath,
+    rawTranscript: result.rawTranscript,
+    cleanedText: result.text,
+    transcriptionModel: result.transcriptionModel,
+    cleanupModel: result.cleanupModel,
+    usedCleanupFallback: result.usedCleanupFallback,
+    timings: Object.fromEntries(
+      Object.entries(result.timings).map(([key, value]) => [key, Math.round(value)]),
+    ),
+  }, null, 2));
+} else {
+  const transcriptionStartedAt = performance.now();
+  const transcription = await pipeline.transcribe(audio, { language: "en" });
+  const transcriptionMs = performance.now() - transcriptionStartedAt;
+  const cleanupStartedAt = performance.now();
+  const cleanup = await pipeline.cleanup("hello um this is the groq dictation kit live smoke test", {
+    context: { appName: "Live smoke test", fieldType: "document" },
+  });
+  const cleanupMs = performance.now() - cleanupStartedAt;
 
-console.log(JSON.stringify({
-  transcription: {
-    text: transcription.text,
-    model: transcription.model,
-    filteredAsSilence: transcription.filteredAsSilence,
-  },
-  cleanup: {
-    text: cleanup.text,
-    model: cleanup.model,
-    usedFallback: cleanup.usedFallback,
-  },
-  timings: {
-    transcriptionMs: Math.round(transcriptionMs),
-    cleanupMs: Math.round(cleanupMs),
-    totalMs: Math.round(transcriptionMs + cleanupMs),
-  },
-}, null, 2));
+  if (!cleanup.text) throw new Error("Live cleanup returned empty text.");
+
+  console.log(JSON.stringify({
+    transcription: {
+      text: transcription.text,
+      model: transcription.model,
+      filteredAsSilence: transcription.filteredAsSilence,
+    },
+    cleanup: {
+      text: cleanup.text,
+      model: cleanup.model,
+      usedFallback: cleanup.usedFallback,
+    },
+    timings: {
+      transcriptionMs: Math.round(transcriptionMs),
+      cleanupMs: Math.round(cleanupMs),
+      totalMs: Math.round(transcriptionMs + cleanupMs),
+    },
+  }, null, 2));
+}
+
+function assertExpectedFixture(rawTranscript, cleanedText) {
+  const raw = normalize(rawTranscript);
+  const cleaned = normalize(cleanedText);
+  for (const [label, value] of [["raw transcript", raw], ["cleaned text", cleaned]]) {
+    if (!value.includes("hello") || !value.includes("live test")) {
+      throw new Error(`Live fixture ${label} did not contain the expected phrase.`);
+    }
+  }
+  if (/\bum\b/.test(cleaned)) {
+    throw new Error("Live cleanup did not remove the expected filler word.");
+  }
+}
+
+function normalize(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
 
 function createToneWav(durationSeconds = 0.75, sampleRate = 16_000) {
   const sampleCount = Math.round(durationSeconds * sampleRate);

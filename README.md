@@ -197,7 +197,7 @@ When no audio path is supplied, the command generates a short WAV fixture and pe
 GROQ_API_KEY=your_key npm run test:live
 ```
 
-The repository's `Live Groq smoke test` GitHub Actions workflow runs this provider check after every push to `main`. It reads `GROQ_API_KEY` from GitHub Actions secrets and is intentionally not triggered for pull requests, so forked code cannot access the credential. Because this makes live Groq requests, each `main` push consumes a small amount of the account's quota.
+The repository's `Live Groq smoke test` GitHub Actions workflow runs `test.wav` after every push to `main`. The fixture says “Hello, um, this is a live test,” and the workflow verifies both the raw Whisper transcript and the cleaned result, including removal of the filler word. It reads `GROQ_API_KEY` from GitHub Actions secrets and is intentionally not triggered for pull requests, so forked code cannot access the credential. Because this makes live Groq requests, each `main` push consumes a small amount of the account's quota.
 
 ## Public API
 
