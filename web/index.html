@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <title>Dictation Latency Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">Dictation Kit · Performance harness</p>
+          <h1>Say it. Measure everything.</h1>
+          <p class="lede">A thin web client around the reusable Groq pipeline, with every expensive stage timed independently.</p>
+        </div>
+        <div id="health" class="health" aria-live="polite">
+          <span class="health-dot"></span>
+          <span>Checking backend</span>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <article class="recorder-card">
+          <div class="recording-head">
+            <div>
+              <p class="label">Live capture</p>
+              <p id="recording-time" class="recording-time">00:00.0</p>
+            </div>
+            <div id="state" class="state">Ready</div>
+          </div>
+
+          <div id="waveform" class="waveform" aria-hidden="true">
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+
+          <button id="record-button" class="record-button" type="button">
+            <span class="record-icon"></span>
+            <span id="record-label">Start dictating</span>
+          </button>
+
+          <div class="fields">
+            <label>
+              <span>Language</span>
+              <select id="language">
+                <option value="en">English</option>
+                <option value="hi">Hindi</option>
+                <option value="">Auto-detect</option>
+              </select>
+            </label>
+            <label>
+              <span>Destination context</span>
+              <input id="context" value="Writing a polished document" maxlength="240" />
+            </label>
+          </div>
+
+          <p id="notice" class="notice" role="status">Your audio is sent only after you stop recording.</p>
+        </article>
+
+        <article class="output-card">
+          <div class="section-head">
+            <div>
+              <p class="label">Final text</p>
+              <h2>Cleaned transcript</h2>
+            </div>
+            <button id="copy-button" class="copy-button" type="button" disabled>Copy</button>
+          </div>
+          <div id="output" class="output empty">Your polished dictation will appear here.</div>
+          <details>
+            <summary>Raw Whisper transcript</summary>
+            <pre id="raw-output">No transcript yet.</pre>
+          </details>
+        </article>
+      </section>
+
+      <section class="benchmark-card">
+        <div class="section-head">
+          <div>
+            <p class="label">Latest run</p>
+            <h2>Latency breakdown</h2>
+          </div>
+          <div id="total-latency" class="total-latency">— ms total</div>
+        </div>
+
+        <div id="metrics" class="metrics">
+          <div class="metric" data-key="recordingMs"><span>Recording</span><strong>—</strong><div><i></i></div></div>
+          <div class="metric" data-key="requestParseMs"><span>Request parse</span><strong>—</strong><div><i></i></div></div>
+          <div class="metric" data-key="transcriptionMs"><span>Groq Whisper</span><strong>—</strong><div><i></i></div></div>
+          <div class="metric" data-key="cleanupMs"><span>LLM cleanup</span><strong>—</strong><div><i></i></div></div>
+          <div class="metric" data-key="serverOverheadMs"><span>Server overhead</span><strong>—</strong><div><i></i></div></div>
+          <div class="metric" data-key="networkOverheadMs"><span>Network overhead</span><strong>—</strong><div><i></i></div></div>
+        </div>
+
+        <div class="run-meta">
+          <span id="model-meta">Models will appear after a run</span>
+          <span id="audio-meta">No audio uploaded</span>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
