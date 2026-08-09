@@ -146,7 +146,7 @@ console.log(result.text, result.timings);
 
 `dictateLong` is additive: the original `dictate` API remains unchanged. Long-form output defaults to the raw transcript so an LLM cannot silently compress a large recording.
 
-Use `dictateAuto` when the library should inspect the input and retain the direct path below 20 MiB or select chunking above it:
+Use `dictateAuto` when the library should inspect the input and retain the direct path for recordings no longer than 90 seconds and below 20 MiB, or select chunking otherwise:
 
 ```ts
 const result = await pipeline.dictateAuto(audio, {
@@ -210,6 +210,8 @@ Successful chunks are persisted immediately. A failed job can retry only missing
 const resumed = pipeline.resumeJob(jobId, audio, { store, processor });
 const result = await resumed.result();
 ```
+
+When a job is partial, `CHUNK_TRANSCRIPTION_FAILED.details` includes the completed chunks and a best-effort partial transcript. `job.inspect()` exposes the complete durable manifest. Segment timestamps returned in the final result are offset to the absolute recording timeline.
 
 The default `MemoryJobStore` survives within one pipeline process. For restart recovery on a Node.js host:
 

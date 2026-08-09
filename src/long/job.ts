@@ -159,9 +159,15 @@ export class LongJob implements LongDictationJob {
       if (failed.length > 0) {
         this.manifest.status = this.manifest.chunks.some((chunk) => chunk.status === "completed") ? "partial" : "failed";
         await this.persist();
+        const completed = toChunkResults(this.manifest.chunks.filter((chunk) => chunk.status === "completed"));
         throw new DictationError(`${failed.length} audio chunk${failed.length === 1 ? "" : "s"} failed. Resume the job to retry only failed chunks.`, {
           code: "CHUNK_TRANSCRIPTION_FAILED",
-          details: { jobId: this.id, failed: failed.map((chunk) => chunk.index) },
+          details: {
+            jobId: this.id,
+            failed: failed.map((chunk) => chunk.index),
+            completedChunks: completed,
+            partialTranscript: stitchChunks(completed),
+          },
         });
       }
 
@@ -384,7 +390,11 @@ function toChunkResults(records: readonly LongChunkRecord[]): LongChunkResult[] 
     endMs: record.endMs,
     overlapBeforeMs: record.overlapBeforeMs,
     text: record.result!.text,
-    segments: record.result!.segments,
+    segments: record.result!.segments.map((segment) => ({
+      ...segment,
+      ...(segment.start !== undefined ? { start: segment.start + record.startMs / 1000 } : {}),
+      ...(segment.end !== undefined ? { end: segment.end + record.startMs / 1000 } : {}),
+    })),
     model: record.result!.model,
     durationMs: record.durationMs ?? 0,
   }));

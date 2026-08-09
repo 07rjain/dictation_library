@@ -54,10 +54,22 @@ export class GroqBatchClient {
   private readonly fetchImpl: FetchLike;
   private readonly zeroDataRetention: boolean;
 
-  constructor(options: Pick<DictationClientOptions, "apiKey" | "baseUrl" | "fetch"> & {
+  constructor(options: Pick<
+    DictationClientOptions,
+    "apiKey" | "baseUrl" | "fetch" | "dangerouslyAllowBrowser"
+  > & {
     zeroDataRetention?: boolean;
   }) {
     this.apiKey = options.apiKey.trim();
+    if (!this.apiKey) {
+      throw new DictationError("A Groq API key is required.", { code: "MISSING_API_KEY" });
+    }
+    if (typeof window !== "undefined" && !options.dangerouslyAllowBrowser) {
+      throw new DictationError(
+        "Refusing to expose a Groq key in a browser bundle. Batch should run on a trusted server.",
+        { code: "BROWSER_API_KEY_BLOCKED" },
+      );
+    }
     this.baseUrl = (options.baseUrl ?? DEFAULT_GROQ_BASE_URL).replace(/\/+$/, "");
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.zeroDataRetention = options.zeroDataRetention ?? false;

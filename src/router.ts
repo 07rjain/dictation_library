@@ -9,6 +9,8 @@ export interface AudioRoutingOptions {
   background?: boolean;
   storageAvailable?: boolean;
   directMaxBytes?: number;
+  /** Direct-route duration gate. Defaults to 90 seconds when duration is known. */
+  directMaxDurationMs?: number;
   /** Conservative URL ceiling when known. Defaults to 22 MiB free / 90 MiB developer. */
   accountTier?: "free" | "developer";
 }
@@ -26,11 +28,13 @@ export async function routeAudio(
 ): Promise<AudioRouteDecision> {
   const metadata = await inspectAudio(audio);
   const directLimit = options.directMaxBytes ?? DEFAULT_DIRECT_UPLOAD_MAX_BYTES;
+  const directDurationLimit = options.directMaxDurationMs ?? 90_000;
   const urlLimit = (options.accountTier ?? "free") === "developer" ? 90 * 1024 * 1024 : 22 * 1024 * 1024;
   if (options.background && options.storageAvailable) {
     return { kind: "batch", reason: "background processing requested with URL-capable storage", metadata };
   }
-  if (!options.forceLong && metadata.sizeBytes <= directLimit) {
+  const durationFits = metadata.durationMs === undefined || metadata.durationMs <= directDurationLimit;
+  if (!options.forceLong && metadata.sizeBytes <= directLimit && durationFits) {
     return { kind: "direct", reason: "audio is below the conservative multipart threshold", metadata };
   }
   if (options.storageAvailable && metadata.sizeBytes <= urlLimit) {

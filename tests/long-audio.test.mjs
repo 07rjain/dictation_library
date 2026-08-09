@@ -66,6 +66,8 @@ test("runs a bounded long job, emits progress, and stitches overlap", async () =
   assert.equal(result.rawTranscript, "Hello shared this is a live test");
   assert.equal(result.text, result.rawTranscript);
   assert.equal(result.chunks.length, 3);
+  assert.equal(result.chunks[1].segments[0].start, 0.8);
+  assert.equal(result.chunks[2].segments[0].start, 1.6);
   assert.ok(maximumActive <= 2);
   assert.equal(events.filter((event) => event.type === "chunk.completed").length, 3);
   assert.equal(events.at(-1).type, "job.completed");
@@ -87,7 +89,13 @@ test("persists successful chunks and resumes only failed chunks", async () => {
     overlapMs: 200,
     concurrency: 2,
   });
-  await assert.rejects(first.result(), (error) => error instanceof DictationError && error.code === "CHUNK_TRANSCRIPTION_FAILED");
+  await assert.rejects(first.result(), (error) => {
+    assert.ok(error instanceof DictationError);
+    assert.equal(error.code, "CHUNK_TRANSCRIPTION_FAILED");
+    assert.equal(error.details.completedChunks.length, 2);
+    assert.ok(error.details.partialTranscript.includes("chunk 0"));
+    return true;
+  });
   const partial = await first.inspect();
   assert.equal(partial.status, "partial");
   assert.deepEqual(partial.chunks.map((chunk) => chunk.status), ["completed", "failed", "completed"]);
@@ -138,6 +146,14 @@ test("stitching deduplicates only when chunks have temporal overlap", () => {
     { index: 1, startMs: 1_000, endMs: 2_000, overlapBeforeMs: 0, text: "yes again", segments: [], model: "test", durationMs: 1 },
   ];
   assert.equal(stitchChunks(chunks), "yes yes yes again");
+});
+
+test("stitching uses fuzzy reconciliation only inside a temporal overlap", () => {
+  const chunks = [
+    { index: 0, startMs: 0, endMs: 60_000, overlapBeforeMs: 0, text: "we deployed the colour service", segments: [], model: "test", durationMs: 1 },
+    { index: 1, startMs: 58_000, endMs: 118_000, overlapBeforeMs: 2_000, text: "the color service successfully today", segments: [], model: "test", durationMs: 1 },
+  ];
+  assert.equal(stitchChunks(chunks), "we deployed the colour service successfully today");
 });
 
 test("VAD-assisted WAV boundaries move to silence without deleting timeline coverage", async () => {
@@ -224,9 +240,15 @@ test("automatic routing keeps short audio direct and sends oversized audio to ch
     { data: new Blob([new Uint8Array(21 * 1024 * 1024)]), filename: "large.flac" },
     { storageAvailable: true, accountTier: "free" },
   );
+  const longButCompact = await routeAudio({
+    data: new Blob(["compact"], { type: "audio/flac" }),
+    filename: "ten-minutes.flac",
+    durationMs: 10 * 60_000,
+  });
   assert.equal(direct.kind, "direct");
   assert.equal(chunked.kind, "chunked");
   assert.equal(stored.kind, "stored-url");
+  assert.equal(longButCompact.kind, "chunked");
 
   let calls = 0;
   const pipeline = new DictationPipeline({
@@ -240,6 +262,21 @@ test("automatic routing keeps short audio direct and sends oversized audio to ch
   const result = await pipeline.dictateAuto({ data: new Blob(["small"], { type: "audio/webm" }), filename: "small.webm" });
   assert.equal(result.text, "Short.");
   assert.equal(calls, 2);
+});
+
+test("aborting a long job cancels provider work and persists aborted status", async () => {
+  const pipeline = new DictationPipeline({
+    apiKey: "test",
+    retry: { maxAttempts: 1 },
+    fetch: async (_url, init) => new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    }),
+  });
+  const job = pipeline.createJob(wavAudio, { targetChunkMs: 1_000, overlapMs: 200 });
+  const pending = job.result();
+  setTimeout(() => job.abort(), 5);
+  await assert.rejects(pending, (error) => error instanceof DictationError && error.code === "JOB_ABORTED");
+  assert.equal((await job.inspect()).status, "aborted");
 });
 
 async function collect(iterable) {

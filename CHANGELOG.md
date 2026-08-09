@@ -8,7 +8,7 @@ All notable changes to this project will be documented here. This project follow
 
 - Resumable long-audio jobs with bounded concurrency, progress events, partial results, and per-chunk persistence.
 - Codec-safe PCM WAV segmentation, optional VAD-assisted boundaries, and Node.js FFmpeg normalization through the `groq-dictation-kit/node` export.
-- Timestamp-aware overlap stitching with lexical fallback limited to actual overlap regions.
+- Absolute recording timestamps and timestamp-aware overlap stitching with fuzzy lexical fallback limited to actual overlap regions.
 - Durable `FileJobStore`, portable `JobStore`, `AudioProcessor`, and `ObjectStorage` adapters.
 - HTTPS URL transcription, temporary private-storage transcription, and asynchronous Groq audio Batch support.
 - Long-form cleanup modes, bounded cleanup windows, deletion/expansion/protected-term guards, and canonical raw transcripts.

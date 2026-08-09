@@ -87,3 +87,10 @@ test("refuses Batch when strict zero-data-retention mode is enabled", async () =
     (error) => error instanceof DictationError && error.code === "BATCH_DISABLED_FOR_ZDR",
   );
 });
+
+test("standalone Batch client rejects an empty API key", () => {
+  assert.throws(
+    () => new GroqBatchClient({ apiKey: " " }),
+    (error) => error instanceof DictationError && error.code === "MISSING_API_KEY",
+  );
+});

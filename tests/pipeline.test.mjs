@@ -185,3 +185,35 @@ test("supports per-dictation nested overrides without changing legacy options", 
   assert.equal(cleanupBody.messages[0].content, "ONE-OFF SYSTEM");
   assert.equal("reasoning_effort" in cleanupBody, false);
 });
+
+test("retries retryable transcription failures without replaying cleanup", async () => {
+  let calls = 0;
+  const client = new GroqClient({
+    apiKey: "test",
+    retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) return new Response("temporary", { status: 503 });
+      return Response.json({ text: "Recovered", segments: [] });
+    },
+  });
+  const result = await client.transcribe(audio);
+  assert.equal(result.text, "Recovered");
+  assert.equal(calls, 2);
+});
+
+test("adaptive timeout produces a stable REQUEST_TIMEOUT error", async () => {
+  const client = new GroqClient({
+    apiKey: "test",
+    timeoutMs: 2,
+    timeoutPolicy: { minimumMs: 2, maximumMs: 10, perAudioSecondMs: 0, perMiBMs: 0 },
+    retry: { maxAttempts: 1 },
+    fetch: async (_url, init) => new Promise((resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    }),
+  });
+  await assert.rejects(
+    client.transcribe(audio),
+    (error) => error instanceof Error && error.code === "REQUEST_TIMEOUT",
+  );
+});
