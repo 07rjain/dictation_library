@@ -59,5 +59,10 @@
   "packageManager": "npm@10.8.2",
   "devDependencies": {
     "typescript": "^5.9.2"
+  },
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
   }
 }

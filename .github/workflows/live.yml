@@ -1,0 +1,33 @@
+name: Live Groq smoke test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-groq-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    if: github.repository == '07rjain/dictation_library'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify live-test secret exists
+        run: test -n "$GROQ_API_KEY"
+      - name: Run live Groq provider smoke test
+        run: npm run test:live
