@@ -1,12 +1,11 @@
 import { DictationError } from "./errors.js";
+import {
+  DEFAULT_BROWSER_AUDIO_BITS_PER_SECOND,
+  DEFAULT_BROWSER_MEDIA_STREAM_CONSTRAINTS,
+  DEFAULT_BROWSER_MIME_TYPES,
+  DEFAULT_BROWSER_TIMESLICE_MS,
+} from "./defaults.js";
 import type { BrowserRecorderOptions, BrowserRecording } from "./types.js";
-
-const DEFAULT_MIME_TYPES = [
-  "audio/webm;codecs=opus",
-  "audio/webm",
-  "audio/ogg;codecs=opus",
-  "audio/mp4",
-] as const;
 
 export class BrowserRecorder {
   private readonly options: BrowserRecorderOptions;
@@ -33,26 +32,19 @@ export class BrowserRecorder {
       });
     }
     this.stream = await navigator.mediaDevices.getUserMedia(
-      this.options.mediaStreamConstraints ?? {
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      },
+      this.options.mediaStreamConstraints ?? DEFAULT_BROWSER_MEDIA_STREAM_CONSTRAINTS,
     );
-    const mimeType = chooseMimeType(this.options.mimeTypes ?? DEFAULT_MIME_TYPES);
+    const mimeType = chooseMimeType(this.options.mimeTypes ?? DEFAULT_BROWSER_MIME_TYPES);
     this.chunks = [];
     this.recorder = new MediaRecorder(this.stream, {
       ...(mimeType ? { mimeType } : {}),
-      audioBitsPerSecond: this.options.audioBitsPerSecond ?? 64_000,
+      audioBitsPerSecond: this.options.audioBitsPerSecond ?? DEFAULT_BROWSER_AUDIO_BITS_PER_SECOND,
     });
     this.recorder.addEventListener("dataavailable", (event) => {
       if (event.data.size > 0) this.chunks.push(event.data);
     });
     this.startedAt = performance.now();
-    this.recorder.start(this.options.timesliceMs ?? 250);
+    this.recorder.start(this.options.timesliceMs ?? DEFAULT_BROWSER_TIMESLICE_MS);
   }
 
   async stop(): Promise<BrowserRecording> {

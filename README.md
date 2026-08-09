@@ -19,7 +19,7 @@ The website uses the published `groq-dictation-kit` package. Bring your own Groq
 - npm: [`groq-dictation-kit`](https://www.npmjs.com/package/groq-dictation-kit)
 - Live website: [`07rjain.github.io/dictation_library`](https://07rjain.github.io/dictation_library/)
 - Source and issues: [`07rjain/dictation_library`](https://github.com/07rjain/dictation_library)
-- Current release: [`v0.1.0`](https://github.com/07rjain/dictation_library/releases/tag/v0.1.0)
+- Current release: [`v0.2.0`](https://github.com/07rjain/dictation_library/releases/tag/v0.2.0)
 - Runtime: ESM with bundled TypeScript declarations; Node.js 20 or newer
 - License: MIT
 
@@ -42,6 +42,60 @@ The speed-oriented defaults are:
 - Cleanup: `openai/gpt-oss-20b` with low reasoning
 - Cleanup fallback: `qwen/qwen3.6-27b`
 - Request timeout: 20 seconds
+
+## Customize defaults safely
+
+Every built-in request and filtering setting is now optional configuration. If a setting is omitted, the library uses the same defaults listed above, so existing integrations continue to behave exactly as before.
+
+Set reusable defaults when constructing the pipeline:
+
+```ts
+import {
+  DEFAULT_HALLUCINATION_PHRASES,
+  DictationPipeline,
+} from "groq-dictation-kit";
+
+const pipeline = new DictationPipeline({
+  apiKey: process.env.GROQ_API_KEY!,
+  timeoutMs: 30_000,
+  transcription: {
+    temperature: 0.1,
+    language: "en",
+    hallucinationPhrases: [
+      ...DEFAULT_HALLUCINATION_PHRASES,
+      "custom silence phrase",
+    ],
+    hallucinationNoSpeechThreshold: 0.2,
+  },
+  cleanup: {
+    systemPrompt: "Return only lightly edited dictated text.",
+    temperature: 0.2,
+    maxCompletionTokens: 2048,
+    reasoningEffort: "low",
+    includeReasoning: false,
+    emptyResponseToken: "EMPTY",
+  },
+});
+```
+
+Override them for one dictation without changing the pipeline defaults:
+
+```ts
+const result = await pipeline.dictate(audio, {
+  transcription: {
+    filterHallucinations: false,
+    temperature: 0.3,
+  },
+  cleanup: {
+    systemPrompt: "Preserve every spoken word; only fix punctuation.",
+    reasoningEffort: false,
+  },
+});
+```
+
+Advanced integrations can provide `cleanup.messageBuilder` to replace the complete system/user message array. All built-in values—including models, Groq URL, timeout, temperatures, response format, hallucination phrases and threshold, token limit, reasoning behavior, empty-response token, and browser recording defaults—are exported as `DEFAULT_*` constants.
+
+Configuration precedence is: per-call flat compatibility options, per-call nested options, constructor defaults, then built-in defaults.
 
 ## Install and verify
 

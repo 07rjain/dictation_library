@@ -1,5 +1,17 @@
 export type TranscriptionModel = "whisper-large-v3-turbo" | "whisper-large-v3" | (string & {});
 export type CleanupModel = "openai/gpt-oss-20b" | "qwen/qwen3.6-27b" | (string & {});
+export type TranscriptionResponseFormat = "verbose_json" | "json" | "text" | "srt" | "vtt" | (string & {});
+
+export interface CleanupMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export type CleanupMessageBuilder = (
+  transcript: string,
+  context: DictationContext,
+  options: CleanupConfig,
+) => readonly CleanupMessage[];
 
 export interface AudioInput {
   data: Blob;
@@ -16,26 +28,54 @@ export interface DictationContext {
 
 export type ContextProvider = () => DictationContext | Promise<DictationContext>;
 
-export interface TranscriptionOptions {
-  model?: TranscriptionModel;
+export interface TranscriptionConfig {
   /** ISO-639-1 language code. Supplying it can improve latency and accuracy. */
   language?: string;
   /** Up to 224 tokens of vocabulary/spelling guidance for Whisper. */
   prompt?: string;
+  temperature?: number;
+  responseFormat?: TranscriptionResponseFormat;
+  /** Exact phrases filtered when Whisper also reports likely silence. Use [] to disable the phrase list. */
+  hallucinationPhrases?: readonly string[];
+  hallucinationNoSpeechThreshold?: number;
+  filterHallucinations?: boolean;
+}
+
+export interface TranscriptionOptions extends TranscriptionConfig {
+  model?: TranscriptionModel;
   signal?: AbortSignal;
 }
 
-export interface CleanupOptions {
-  model?: CleanupModel;
-  fallbackModel?: CleanupModel | false;
-  context?: DictationContext;
+export interface CleanupConfig {
   vocabulary?: readonly string[];
   outputLanguage?: string;
   preserveExactWording?: boolean;
+  /** Replaces the built-in cleanup system prompt. */
+  systemPrompt?: string;
+  /** Replaces the built-in cleanup message construction entirely. */
+  messageBuilder?: CleanupMessageBuilder;
+  temperature?: number;
+  maxCompletionTokens?: number;
+  /** Set false to omit reasoning_effort. Defaults to low for GPT-OSS models. */
+  reasoningEffort?: string | false;
+  includeReasoning?: boolean;
+  /** Set false to disable conversion of the sentinel response to an empty string. */
+  emptyResponseToken?: string | false;
+  stripThinkTags?: boolean;
+}
+
+export interface CleanupOptions extends CleanupConfig {
+  model?: CleanupModel;
+  fallbackModel?: CleanupModel | false;
+  context?: DictationContext;
   signal?: AbortSignal;
 }
 
 export interface DictationOptions {
+  /** Per-dictation transcription overrides. Flat legacy options below take precedence. */
+  transcription?: TranscriptionConfig;
+  /** Per-dictation cleanup overrides. Flat legacy options below take precedence. */
+  cleanup?: CleanupConfig;
   transcriptionModel?: TranscriptionModel;
   cleanupModel?: CleanupModel;
   fallbackModel?: CleanupModel | false;
@@ -104,6 +144,10 @@ export interface DictationClientOptions {
   cleanupModel?: CleanupModel;
   cleanupFallbackModel?: CleanupModel | false;
   timeoutMs?: number;
+  /** Defaults applied to every transcription request. */
+  transcription?: TranscriptionConfig;
+  /** Defaults applied to every cleanup request. */
+  cleanup?: CleanupConfig;
   fetch?: FetchLike;
   onEvent?: (event: PipelineEvent) => void;
   /** Required for direct browser usage. Never enable this with a shared production key. */

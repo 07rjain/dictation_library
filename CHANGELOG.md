@@ -4,6 +4,13 @@ All notable changes to this project will be documented here. This project follow
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-09
+
+### Added
+
+- Constructor-level and per-dictation overrides for transcription, cleanup, prompts, hallucination filtering, reasoning, response tokens, and request parameters.
+- Exported constants for every built-in model, request, filtering, cleanup, and browser-recording default.
+
 ## [0.1.0] - 2026-08-09
 
 ### Added

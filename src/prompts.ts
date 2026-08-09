@@ -1,4 +1,4 @@
-import type { CleanupOptions, DictationContext } from "./types.js";
+import type { CleanupConfig, CleanupMessage, DictationContext } from "./types.js";
 
 export const DEFAULT_CLEANUP_SYSTEM_PROMPT = `You are a literal dictation cleanup layer for short messages, emails, prompts, documents, and commands.
 
@@ -19,9 +19,9 @@ Hard contract:
 export function buildCleanupMessages(
   transcript: string,
   context: DictationContext,
-  options: CleanupOptions,
-): Array<{ role: "system" | "user"; content: string }> {
-  let system = DEFAULT_CLEANUP_SYSTEM_PROMPT;
+  options: CleanupConfig = {},
+): CleanupMessage[] {
+  let system = options.systemPrompt ?? DEFAULT_CLEANUP_SYSTEM_PROMPT;
   if (options.preserveExactWording) {
     system += "\n- Preserve exact wording. Only repair punctuation, casing, spacing, and unmistakable ASR errors.";
   }

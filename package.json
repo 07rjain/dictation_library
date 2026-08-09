@@ -1,6 +1,6 @@
 {
   "name": "groq-dictation-kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Fast, reusable browser dictation pipeline powered by Groq.",
   "author": "07rjain",
   "type": "module",

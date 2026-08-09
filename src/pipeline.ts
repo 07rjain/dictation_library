@@ -66,12 +66,14 @@ export class DictationPipeline {
     const transcriptionStartedAt = performance.now();
     this.emit({ type: "transcription.started" });
 
-    const transcription = await this.groq.transcribe(audio, {
+    const transcriptionOptions: TranscriptionOptions = {
+      ...options.transcription,
       ...(options.transcriptionModel !== undefined ? { model: options.transcriptionModel } : {}),
       ...(options.language !== undefined ? { language: options.language } : {}),
       ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
-    });
+    };
+    const transcription = await this.groq.transcribe(audio, transcriptionOptions);
     const transcriptionMs = performance.now() - transcriptionStartedAt;
     this.emit({
       type: "transcription.completed",
@@ -90,6 +92,7 @@ export class DictationPipeline {
       this.emit({ type: "cleanup.started" });
       const cleanupStartedAt = performance.now();
       const cleanupOptions: CleanupOptions = {
+        ...options.cleanup,
         context,
         ...(options.cleanupModel !== undefined ? { model: options.cleanupModel } : {}),
         ...(options.fallbackModel !== undefined ? { fallbackModel: options.fallbackModel } : {}),
