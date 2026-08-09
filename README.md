@@ -12,7 +12,16 @@ This is an independent open-source project and is not affiliated with or endorse
 
 **[Open the live dictation website](https://07rjain.github.io/dictation_library/)**
 
-The website uses the published `groq-dictation-kit` package. Bring your own Groq API key, record in the browser, and inspect the cleaned transcript and per-stage latency measurements. The key is kept only in the current browser tab and requests are sent directly to Groq; the demo has no account system, database, analytics, or backend proxy.
+The website uses the same `groq-dictation-kit` library, built from the current repository source during deployment. Bring your own Groq API key, record in the browser, and inspect the cleaned transcript and per-stage latency measurements. The key is kept only in the current browser tab and requests are sent directly to Groq; the demo has no account system, database, analytics, or backend proxy.
+
+To test the current website:
+
+1. Paste a Groq API key into **Your Groq key**. A reload intentionally clears it, so it must be entered again after refreshing.
+2. Leave **Live partials** off for the original record-then-transcribe flow, or enable it for transcript updates about every five seconds.
+3. Select **Start dictating**, allow microphone access, speak, then select **Stop & transcribe** or **Stop & finish**.
+4. If microphone permission was previously denied, restore it in the browser's site settings and reload the page.
+
+The Pages deployment builds the current library source and serves content-addressed application and ESM assets from the same commit. This prevents a browser cache from combining incompatible website and library versions. The npm package link remains the latest stable registry release.
 
 ## Package
 

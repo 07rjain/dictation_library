@@ -14,7 +14,7 @@ const elements = {
   liveMode: document.querySelector("#live-mode"),
   recordButton: document.querySelector("#record-button"),
   recordLabel: document.querySelector("#record-button span"),
-  state: document.querySelector("#state span"),
+  stateText: document.querySelector("#state span"),
   timer: document.querySelector("#timer"),
   visualizer: document.querySelector("#visualizer"),
   notice: document.querySelector("#notice"),
@@ -41,6 +41,7 @@ elements.toggleKey.addEventListener("click", () => {
 });
 
 elements.recordButton.addEventListener("click", toggleRecording);
+elements.apiKey.addEventListener("input", updateKeyReadiness);
 elements.liveMode.addEventListener("change", () => {
   if (recorder.isRecording) return;
   setNotice(elements.liveMode.checked
@@ -65,6 +66,13 @@ window.addEventListener("pagehide", () => {
   recorder.cancel();
 });
 
+const recordingSupported = Boolean(globalThis.navigator?.mediaDevices?.getUserMedia && globalThis.MediaRecorder);
+if (!recordingSupported) {
+  elements.recordButton.disabled = true;
+  elements.stateText.textContent = "Browser unsupported";
+  setNotice("This browser cannot access MediaRecorder microphone capture. Try a current Chrome, Edge, Firefox, or Safari release.", true);
+}
+
 async function toggleRecording() {
   if (elements.recordButton.disabled) return;
   if (recorder.isRecording) return stopAndTranscribe();
@@ -74,12 +82,14 @@ async function toggleRecording() {
 async function startRecording() {
   const apiKey = elements.apiKey.value.trim();
   if (!apiKey) {
-    setNotice("Enter your Groq API key before recording.", true);
+    elements.stateText.textContent = "API key required";
+    setNotice("Paste your Groq API key in the field on the left before recording.", true);
     elements.apiKey.focus();
     return;
   }
 
   try {
+    setBusy(true, "Requesting microphone…");
     activePipeline = new DictationPipeline({
       apiKey,
       dangerouslyAllowBrowser: true,
@@ -113,10 +123,11 @@ async function startRecording() {
     await recorder.start();
     startedAt = performance.now();
     timerId = window.setInterval(updateTimer, 50);
+    setBusy(false);
     elements.recordButton.classList.add("recording");
     elements.visualizer.classList.add("active");
     elements.recordLabel.textContent = activeLiveMode ? "Stop & finish" : "Stop & transcribe";
-    elements.state.textContent = "Listening";
+    elements.stateText.textContent = "Listening";
     if (activeLiveMode) {
       elements.output.textContent = "Listening for the first live window…";
       elements.output.classList.add("empty", "streaming");
@@ -125,6 +136,7 @@ async function startRecording() {
       setNotice("Speak naturally. You can correct yourself mid-sentence.");
     }
   } catch (error) {
+    recorder.cancel();
     showError(error);
   }
 }
@@ -135,7 +147,8 @@ async function stopAndTranscribe() {
   elements.recordButton.classList.remove("recording");
   elements.visualizer.classList.remove("active");
   elements.recordLabel.textContent = "Processing…";
-  elements.state.textContent = "Preparing audio";
+  elements.stateText.textContent = "Preparing audio";
+  elements.recordButton.setAttribute("aria-busy", "true");
 
   try {
     const recording = await recorder.stop();
@@ -150,12 +163,13 @@ async function stopAndTranscribe() {
           },
         );
     renderResult(result, recording);
-    elements.state.textContent = "Complete";
+    elements.stateText.textContent = "Complete";
     setNotice("Done. Your key remains only in this tab.");
   } catch (error) {
     showError(error);
   } finally {
     elements.recordButton.disabled = false;
+    elements.recordButton.setAttribute("aria-busy", "false");
     elements.recordLabel.textContent = "Start dictating";
     activeSession = undefined;
     activePipeline = undefined;
@@ -165,7 +179,7 @@ async function stopAndTranscribe() {
 
 function updateLiveState(event) {
   if (event.type === "live.chunk.started") {
-    elements.state.textContent = `Transcribing window ${event.sequence + 1}`;
+    elements.stateText.textContent = `Transcribing window ${event.sequence + 1}`;
   }
   if (event.type === "live.partial") {
     finalText = event.chunk.transcript;
@@ -173,9 +187,9 @@ function updateLiveState(event) {
     elements.output.classList.toggle("empty", !finalText);
     elements.output.classList.add("streaming");
     elements.rawOutput.textContent = finalText || "No raw transcript yet.";
-    elements.state.textContent = "Listening · live text updated";
+    elements.stateText.textContent = "Listening · live text updated";
   }
-  if (event.type === "live.cleanup.started") elements.state.textContent = "Cleaning the full transcript";
+  if (event.type === "live.cleanup.started") elements.stateText.textContent = "Cleaning the full transcript";
 }
 
 function updatePipelineState(event) {
@@ -185,7 +199,7 @@ function updatePipelineState(event) {
     "cleanup.started": "Cleaning the transcript",
     "cleanup.completed": "Finishing",
   };
-  if (labels[event.type]) elements.state.textContent = labels[event.type];
+  if (labels[event.type]) elements.stateText.textContent = labels[event.type];
 }
 
 function renderResult(result, recording) {
@@ -218,11 +232,31 @@ function updateTimer() {
 
 function showError(error) {
   const message = error instanceof Error ? error.message : "Dictation failed.";
-  elements.state.textContent = "Needs attention";
+  elements.stateText.textContent = "Needs attention";
   setNotice(humanizeError(message), true);
   elements.recordButton.disabled = false;
+  elements.recordButton.setAttribute("aria-busy", "false");
   elements.recordLabel.textContent = "Start dictating";
   elements.output.classList.remove("streaming");
+}
+
+function updateKeyReadiness() {
+  if (recorder.isRecording || !recordingSupported) return;
+  if (elements.apiKey.value.trim()) {
+    elements.stateText.textContent = "Key ready";
+    setNotice(elements.liveMode.checked
+      ? "Ready for live partials. Your key remains only in this tab."
+      : "Ready to record. Audio will be sent after you stop.");
+  } else {
+    elements.stateText.textContent = "Ready when you are";
+    setNotice("Enter your key, then record a short message.");
+  }
+}
+
+function setBusy(busy, label) {
+  elements.recordButton.disabled = busy;
+  elements.recordButton.setAttribute("aria-busy", String(busy));
+  if (label) elements.recordLabel.textContent = label;
 }
 
 function humanizeError(message) {

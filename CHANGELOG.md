@@ -13,6 +13,8 @@ All notable changes to this project will be documented here. This project follow
 ### Fixed
 
 - Completed resumable jobs now verify the supplied audio source before returning a cached result.
+- GitHub Pages now deploys commit-addressed app and library modules, preventing stale mixed-version assets from leaving controls unresponsive.
+- The demo now reports missing keys, unsupported recording APIs, microphone startup, and busy states directly beside the record control.
 
 ### Testing
 
