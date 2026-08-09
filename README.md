@@ -4,6 +4,8 @@ A reusable TypeScript pipeline for fast browser dictation with Groq. It separate
 
 This is an independent open-source project and is not affiliated with or endorsed by Groq, Inc.
 
+**[Try the live BYOK demo](https://07rjain.github.io/dictation_library/)** — your key stays in the browser tab and requests go directly to Groq.
+
 ## Installation
 
 ```bash

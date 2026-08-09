@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Try Groq Dictation Kit in your browser with your own Groq API key." />
+    <meta name="theme-color" content="#101714" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.groq.com https://esm.sh; script-src 'self' https://esm.sh; style-src 'self'; img-src 'self' data:; media-src blob:; object-src 'none'; base-uri 'self'; form-action 'none'" />
+    <title>Groq Dictation Kit — Live Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <nav class="nav">
+        <a class="brand" href="./" aria-label="Groq Dictation Kit home">
+          <span class="brand-mark">D</span>
+          <span>Dictation Kit</span>
+        </a>
+        <div class="nav-links">
+          <a href="https://www.npmjs.com/package/groq-dictation-kit" rel="noreferrer">npm</a>
+          <a href="https://github.com/07rjain/dictation_library" rel="noreferrer">GitHub</a>
+          <span class="version">v0.1.0</span>
+        </div>
+      </nav>
+
+      <header class="hero">
+        <p class="eyebrow">Open-source voice typing · Powered by your Groq account</p>
+        <h1>Speak naturally.<br /><em>Keep the clean version.</em></h1>
+        <p class="hero-copy">Record in your browser, transcribe with Whisper Large v3 Turbo, and remove filler words and false starts with a fast cleanup model.</p>
+        <div class="privacy-line">
+          <span class="pulse"></span>
+          No account, database, analytics, or server proxy. Your key stays in this tab.
+        </div>
+      </header>
+
+      <section class="studio" aria-label="Dictation demo">
+        <aside class="control-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="micro-label">01 · Connect</p>
+              <h2>Your Groq key</h2>
+            </div>
+            <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Get a free key ↗</a>
+          </div>
+
+          <label class="key-field">
+            <span>API key</span>
+            <div class="input-wrap">
+              <input id="api-key" type="password" placeholder="gsk_…" autocomplete="off" spellcheck="false" />
+              <button id="toggle-key" type="button" aria-label="Show API key">Show</button>
+            </div>
+          </label>
+          <p class="key-note">Used only for direct requests to <code>api.groq.com</code>. Never stored in cookies, local storage, or our repository.</p>
+
+          <div class="divider"></div>
+
+          <p class="micro-label">02 · Configure</p>
+          <div class="setting-grid">
+            <label>
+              <span>Transcription</span>
+              <select id="model">
+                <option value="whisper-large-v3-turbo">Turbo · fastest</option>
+                <option value="whisper-large-v3">Large v3 · accurate</option>
+              </select>
+            </label>
+            <label>
+              <span>Language</span>
+              <select id="language">
+                <option value="en">English</option>
+                <option value="hi">Hindi</option>
+                <option value="">Auto-detect</option>
+              </select>
+            </label>
+          </div>
+          <label class="context-field">
+            <span>Writing context</span>
+            <input id="context" value="Writing a polished message" maxlength="240" />
+          </label>
+          <label class="switch-row">
+            <span>
+              <strong>Exact wording</strong>
+              <small>Only repair punctuation and obvious ASR errors</small>
+            </span>
+            <input id="exact-wording" type="checkbox" />
+          </label>
+        </aside>
+
+        <section class="dictation-panel">
+          <div class="dictation-topline">
+            <div>
+              <p class="micro-label">03 · Dictate</p>
+              <div id="state" class="state"><i></i><span>Ready when you are</span></div>
+            </div>
+            <time id="timer">00:00.0</time>
+          </div>
+
+          <div id="visualizer" class="visualizer" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+
+          <button id="record-button" class="record-button" type="button">
+            <i></i>
+            <span>Start dictating</span>
+            <kbd>Space</kbd>
+          </button>
+          <p id="notice" class="notice" role="status">Enter your key, then record a short message.</p>
+
+          <div class="output-heading">
+            <div>
+              <p class="micro-label">Result</p>
+              <h2>Clean transcript</h2>
+            </div>
+            <button id="copy-button" class="text-button" type="button" disabled>Copy text</button>
+          </div>
+          <div id="output" class="output empty">Your cleaned dictation will appear here.</div>
+          <details>
+            <summary>View raw Whisper output</summary>
+            <pre id="raw-output">Nothing transcribed yet.</pre>
+          </details>
+        </section>
+      </section>
+
+      <section class="benchmark">
+        <div class="benchmark-heading">
+          <div>
+            <p class="micro-label">Performance</p>
+            <h2>Where the time went</h2>
+          </div>
+          <strong id="total-time">— ms total</strong>
+        </div>
+        <div class="metrics">
+          <div class="metric" data-key="recordingMs"><span>Recording</span><b>—</b><div><i></i></div></div>
+          <div class="metric" data-key="transcriptionMs"><span>Whisper + upload</span><b>—</b><div><i></i></div></div>
+          <div class="metric accent" data-key="cleanupMs"><span>AI cleanup</span><b>—</b><div><i></i></div></div>
+          <div class="metric" data-key="totalMs"><span>Pipeline total</span><b>—</b><div><i></i></div></div>
+        </div>
+        <p id="run-meta" class="run-meta">Run a dictation to see models, audio size, and exact timings.</p>
+      </section>
+
+      <section class="code-card">
+        <div>
+          <p class="micro-label">Use it in your project</p>
+          <h2>One library, any interface.</h2>
+          <p>The live demo above imports the same published npm package shown here.</p>
+        </div>
+        <pre><code><span>npm install</span> groq-dictation-kit
+
+<span>import</span> { DictationPipeline } <span>from</span> "groq-dictation-kit";
+
+<span>const</span> pipeline = <span>new</span> DictationPipeline({ apiKey });
+<span>const</span> result = <span>await</span> pipeline.dictate(audio);</code></pre>
+      </section>
+
+      <footer>
+        <span>MIT licensed · Unofficial community project</span>
+        <span>Audio and text are processed according to your Groq account settings.</span>
+      </footer>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
