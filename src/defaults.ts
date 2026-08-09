@@ -5,6 +5,15 @@ export const DEFAULT_TRANSCRIPTION_MODEL: TranscriptionModel = "whisper-large-v3
 export const DEFAULT_CLEANUP_MODEL: CleanupModel = "openai/gpt-oss-20b";
 export const DEFAULT_CLEANUP_FALLBACK_MODEL: CleanupModel = "qwen/qwen3.6-27b";
 export const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+export const DEFAULT_DIRECT_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+export const DEFAULT_LONG_CHUNK_MAX_BYTES = 19 * 1024 * 1024;
+export const DEFAULT_TIMEOUT_MINIMUM_MS = 20_000;
+export const DEFAULT_TIMEOUT_MAXIMUM_MS = 180_000;
+export const DEFAULT_TIMEOUT_PER_AUDIO_SECOND_MS = 250;
+export const DEFAULT_TIMEOUT_PER_MIB_MS = 2_000;
+export const DEFAULT_RETRY_MAX_ATTEMPTS = 3;
+export const DEFAULT_RETRY_BASE_DELAY_MS = 250;
+export const DEFAULT_RETRY_MAX_DELAY_MS = 5_000;
 
 export const DEFAULT_TRANSCRIPTION_TEMPERATURE = 0;
 export const DEFAULT_TRANSCRIPTION_RESPONSE_FORMAT = "verbose_json";
@@ -29,6 +38,8 @@ export const DEFAULT_REASONING_EFFORT = "low";
 export const DEFAULT_INCLUDE_REASONING = false;
 export const DEFAULT_EMPTY_RESPONSE_TOKEN = "EMPTY";
 export const DEFAULT_STRIP_THINK_TAGS = true;
+export const DEFAULT_CLEANUP_MAX_DELETION_RATIO = 0.35;
+export const DEFAULT_CLEANUP_MAX_EXPANSION_RATIO = 1.75;
 
 export const DEFAULT_BROWSER_MEDIA_STREAM_CONSTRAINTS: MediaStreamConstraints = Object.freeze({
   audio: Object.freeze({

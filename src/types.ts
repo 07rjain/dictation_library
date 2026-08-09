@@ -16,6 +16,22 @@ export type CleanupMessageBuilder = (
 export interface AudioInput {
   data: Blob;
   filename?: string;
+  /** Known duration, when supplied by the recorder or upload metadata. */
+  durationMs?: number;
+}
+
+export type CleanupMode = "dictation" | "verbatim" | "none" | "summary";
+
+export interface AudioMetadata {
+  sizeBytes: number;
+  mimeType: string;
+  filename: string;
+  durationMs?: number;
+  sampleRate?: number;
+  channels?: number;
+  codec?: string;
+  /** SHA-256 over size plus bounded head/tail bytes, used to reject mismatched resumes. */
+  fingerprint?: string;
 }
 
 export interface DictationContext {
@@ -39,6 +55,7 @@ export interface TranscriptionConfig {
   hallucinationPhrases?: readonly string[];
   hallucinationNoSpeechThreshold?: number;
   filterHallucinations?: boolean;
+  timestampGranularities?: readonly ("segment" | "word")[];
 }
 
 export interface TranscriptionOptions extends TranscriptionConfig {
@@ -47,6 +64,8 @@ export interface TranscriptionOptions extends TranscriptionConfig {
 }
 
 export interface CleanupConfig {
+  /** Cleanup product. Existing short dictation defaults to `dictation`. */
+  mode?: CleanupMode;
   vocabulary?: readonly string[];
   outputLanguage?: string;
   preserveExactWording?: boolean;
@@ -62,6 +81,12 @@ export interface CleanupConfig {
   /** Set false to disable conversion of the sentinel response to an empty string. */
   emptyResponseToken?: string | false;
   stripThinkTags?: boolean;
+  /** Reject cleanup when it removes more than this fraction of words. */
+  maxDeletionRatio?: number;
+  /** Reject cleanup when output expands beyond this multiple. */
+  maxExpansionRatio?: number;
+  /** Reject cleanup that changes numbers, URLs, email addresses, or digit-bearing identifiers. */
+  preserveProtectedTerms?: boolean;
 }
 
 export interface CleanupOptions extends CleanupConfig {
@@ -101,6 +126,7 @@ export interface TranscriptionSegment {
   end?: number;
   no_speech_prob?: number;
   avg_logprob?: number;
+  compression_ratio?: number;
 }
 
 export interface TranscriptionResult {
@@ -114,6 +140,7 @@ export interface CleanupResult {
   text: string;
   model: string;
   usedFallback: boolean;
+  rejected?: boolean;
 }
 
 export interface DictationResult {
@@ -125,6 +152,8 @@ export interface DictationResult {
   filteredAsSilence: boolean;
   context: DictationContext;
   timings: PipelineTimings;
+  /** True when unsafe cleanup output was rejected and raw text was returned. */
+  cleanupRejected?: boolean;
 }
 
 export type PipelineEvent =
@@ -135,6 +164,23 @@ export type PipelineEvent =
   | { type: "cleanup.completed"; durationMs: number; text: string; model: string }
   | { type: "pipeline.completed"; result: DictationResult };
 
+export interface RetryConfig {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+}
+
+export interface TimeoutPolicy {
+  /** Minimum timeout for any provider request. */
+  minimumMs?: number;
+  /** Maximum timeout after adapting to audio duration/size. */
+  maximumMs?: number;
+  /** Additional milliseconds per second of known audio. */
+  perAudioSecondMs?: number;
+  /** Additional milliseconds per MiB when duration is unknown. */
+  perMiBMs?: number;
+}
+
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface DictationClientOptions {
@@ -144,6 +190,10 @@ export interface DictationClientOptions {
   cleanupModel?: CleanupModel;
   cleanupFallbackModel?: CleanupModel | false;
   timeoutMs?: number;
+  timeoutPolicy?: TimeoutPolicy;
+  retry?: RetryConfig;
+  /** Conservative direct multipart limit. Larger inputs require the long-audio API. */
+  directUploadMaxBytes?: number;
   /** Defaults applied to every transcription request. */
   transcription?: TranscriptionConfig;
   /** Defaults applied to every cleanup request. */
@@ -152,6 +202,8 @@ export interface DictationClientOptions {
   onEvent?: (event: PipelineEvent) => void;
   /** Required for direct browser usage. Never enable this with a shared production key. */
   dangerouslyAllowBrowser?: boolean;
+  /** Prevent construction-time Batch use because Groq Batch retains artifacts. */
+  zeroDataRetention?: boolean;
 }
 
 export interface BrowserRecorderOptions {
@@ -159,6 +211,10 @@ export interface BrowserRecorderOptions {
   mimeTypes?: readonly string[];
   audioBitsPerSecond?: number;
   timesliceMs?: number;
+  /** Receives MediaRecorder transport fragments as recording proceeds. Fragments are not guaranteed to be independently playable. */
+  onChunk?: (chunk: Blob, sequence: number) => void | Promise<void>;
+  /** Keep fragments for stop().blob in addition to streaming them. Defaults to true. */
+  retainAudio?: boolean;
 }
 
 export interface BrowserRecording {
@@ -166,4 +222,29 @@ export interface BrowserRecording {
   mimeType: string;
   durationMs: number;
   filename: string;
+  chunkCount?: number;
+  retainedAudio?: boolean;
+}
+
+export interface StoredAudio {
+  key: string;
+  sizeBytes: number;
+  contentType: string;
+}
+
+export interface ObjectStorage {
+  put(key: string, audio: AudioInput): Promise<StoredAudio>;
+  createSignedUrl(key: string, expiresInSeconds: number): Promise<string>;
+  delete?(key: string): Promise<void>;
+}
+
+export interface StorageTranscriptionOptions extends TranscriptionOptions {
+  key?: string;
+  signedUrlExpiresInSeconds?: number;
+  /** Remove the temporary object after the provider request. Defaults to true. */
+  deleteAfter?: boolean;
+}
+
+export interface StorageTranscriptionResult extends TranscriptionResult {
+  storageKey: string;
 }

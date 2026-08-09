@@ -1,7 +1,18 @@
 export { BrowserRecorder } from "./browser-recorder.js";
+export { GroqBatchClient } from "./batch.js";
+export type * from "./batch.js";
+export { inspectAudio } from "./audio.js";
+export { routeAudio } from "./router.js";
+export type * from "./router.js";
 export { DictationError } from "./errors.js";
 export { GroqClient } from "./groq-client.js";
 export { DictationPipeline, DictationSession } from "./pipeline.js";
+export { LongJob } from "./long/job.js";
+export { MemoryJobStore } from "./long/store.js";
+export { stitchChunks } from "./long/stitcher.js";
+export { VadWavAudioProcessor, WavAudioProcessor } from "./long/wav-processor.js";
+export type { WavAudioProcessorOptions } from "./long/wav-processor.js";
+export type * from "./long/types.js";
 export { DEFAULT_CLEANUP_SYSTEM_PROMPT, buildCleanupMessages } from "./prompts.js";
 export * from "./defaults.js";
 export type * from "./types.js";

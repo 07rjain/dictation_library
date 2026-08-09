@@ -1,4 +1,8 @@
 import { GroqClient } from "./groq-client.js";
+import { GroqBatchClient } from "./batch.js";
+import { LongJob } from "./long/job.js";
+import { MemoryJobStore } from "./long/store.js";
+import { routeAudio } from "./router.js";
 import type {
   AudioInput,
   CleanupOptions,
@@ -8,8 +12,18 @@ import type {
   DictationResult,
   ContextProvider,
   PipelineEvent,
+  ObjectStorage,
+  StorageTranscriptionOptions,
+  StorageTranscriptionResult,
   TranscriptionOptions,
 } from "./types.js";
+import type {
+  AutoDictationOptions,
+  JobStore,
+  LongDictationJob,
+  LongDictationOptions,
+  LongDictationResult,
+} from "./long/types.js";
 
 export class DictationSession {
   private readonly contextStartedAt = performance.now();
@@ -29,11 +43,15 @@ export class DictationSession {
 
 export class DictationPipeline {
   readonly groq: GroqClient;
+  readonly batches: GroqBatchClient;
   private readonly onEvent: ((event: PipelineEvent) => void) | undefined;
+  private readonly longJobStore: JobStore;
 
   constructor(options: DictationClientOptions) {
     this.groq = new GroqClient(options);
+    this.batches = new GroqBatchClient(options);
     this.onEvent = options.onEvent;
+    this.longJobStore = new MemoryJobStore();
   }
 
   /** Start this when recording starts so context collection overlaps the user's speech. */
@@ -52,8 +70,59 @@ export class DictationPipeline {
     return this.groq.transcribe(audio, options);
   }
 
+  async transcribeUrl(url: string, options: TranscriptionOptions = {}) {
+    return this.groq.transcribeUrl(url, options);
+  }
+
+  /** Upload audio privately, transcribe through a short-lived URL, then remove it by default. */
+  async transcribeStored(
+    audio: AudioInput,
+    storage: ObjectStorage,
+    options: StorageTranscriptionOptions = {},
+  ): Promise<StorageTranscriptionResult> {
+    const { key, signedUrlExpiresInSeconds, deleteAfter, ...transcription } = options;
+    const storageKey = key ?? `dictation/${createStorageId()}/${safeStorageFilename(audio.filename)}`;
+    const stored = await storage.put(storageKey, audio);
+    try {
+      const url = await storage.createSignedUrl(stored.key, signedUrlExpiresInSeconds ?? 900);
+      const result = await this.groq.transcribeUrl(url, transcription);
+      return { ...result, storageKey: stored.key };
+    } finally {
+      if (deleteAfter !== false) await storage.delete?.(stored.key);
+    }
+  }
+
   async cleanup(transcript: string, options: CleanupOptions = {}) {
     return this.groq.cleanup(transcript, options);
+  }
+
+  /** Create a resumable, observable job for long audio. Existing dictate() behavior is unchanged. */
+  createJob(audio: AudioInput, options: LongDictationOptions = {}): LongDictationJob {
+    return new LongJob(this.groq, audio, options, this.longJobStore);
+  }
+
+  /** Convenience API for long audio. Defaults to chunked transcription with raw output. */
+  dictateLong(audio: AudioInput, options: LongDictationOptions = {}): Promise<LongDictationResult> {
+    return this.createJob(audio, options).result();
+  }
+
+  /** Automatically retain the fast direct path or select codec-aware chunking by size. */
+  async dictateAuto(
+    audio: AudioInput,
+    options: AutoDictationOptions = {},
+  ): Promise<DictationResult | LongDictationResult> {
+    const decision = await routeAudio(audio, {
+      ...(options.forceLong !== undefined ? { forceLong: options.forceLong } : {}),
+    });
+    if (decision.kind === "direct") {
+      return this.dictate(audio, toShortOptions(options));
+    }
+    return this.dictateLong(audio, options);
+  }
+
+  /** Resume an interrupted job and reuse all successfully persisted chunks. */
+  resumeJob(jobId: string, audio: AudioInput, options: LongDictationOptions = {}): LongDictationJob {
+    return this.createJob(audio, { ...options, jobId });
   }
 
   async runSession(
@@ -86,6 +155,7 @@ export class DictationPipeline {
     let text = transcription.text;
     let cleanupModel: string | undefined;
     let usedCleanupFallback = false;
+    let cleanupRejected = false;
     let cleanupMs = 0;
 
     if (text) {
@@ -106,6 +176,7 @@ export class DictationPipeline {
       text = cleaned.text;
       cleanupModel = cleaned.model;
       usedCleanupFallback = cleaned.usedFallback;
+      cleanupRejected = Boolean(cleaned.rejected);
       this.emit({
         type: "cleanup.completed",
         durationMs: cleanupMs,
@@ -128,6 +199,7 @@ export class DictationPipeline {
         cleanupMs,
         totalMs: performance.now() - totalStartedAt,
       },
+      cleanupRejected,
     };
     this.emit({ type: "pipeline.completed", result });
     return result;
@@ -143,4 +215,30 @@ async function resolveContext(
 ): Promise<DictationContext> {
   if (!source) return {};
   return typeof source === "function" ? source() : source;
+}
+
+function createStorageId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+function safeStorageFilename(filename?: string): string {
+  const safe = (filename ?? "dictation.audio").replace(/[^A-Za-z0-9._-]/g, "_");
+  return safe || "dictation.audio";
+}
+
+function toShortOptions(options: AutoDictationOptions): DictationOptions {
+  return {
+    ...(options.transcription !== undefined ? { transcription: options.transcription } : {}),
+    ...(options.cleanup !== undefined ? { cleanup: options.cleanup } : {}),
+    ...(options.transcriptionModel !== undefined ? { transcriptionModel: options.transcriptionModel } : {}),
+    ...(options.cleanupModel !== undefined ? { cleanupModel: options.cleanupModel } : {}),
+    ...(options.fallbackModel !== undefined ? { fallbackModel: options.fallbackModel } : {}),
+    ...(options.language !== undefined ? { language: options.language } : {}),
+    ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
+    ...(options.vocabulary !== undefined ? { vocabulary: options.vocabulary } : {}),
+    ...(options.outputLanguage !== undefined ? { outputLanguage: options.outputLanguage } : {}),
+    ...(options.preserveExactWording !== undefined ? { preserveExactWording: options.preserveExactWording } : {}),
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    ...(options.context !== undefined ? { context: options.context } : {}),
+  };
 }

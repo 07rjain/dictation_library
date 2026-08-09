@@ -1,6 +1,6 @@
 {
   "name": "groq-dictation-kit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Fast, reusable browser dictation pipeline powered by Groq.",
   "author": "07rjain",
   "type": "module",
@@ -11,6 +11,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     }
   },
   "files": [
@@ -19,6 +23,7 @@
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
+    "BENCHMARKS.md",
     "CONTRIBUTING.md",
     "SECURITY.md"
   ],
@@ -28,6 +33,8 @@
     "start": "node web/server.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:live": "npm run build && node scripts/live-smoke.mjs",
+    "test:long:live": "npm run build && node scripts/live-long.mjs",
+    "benchmark:long": "npm run build && node scripts/benchmark-long.mjs",
     "check": "npm run test",
     "prepack": "npm run build",
     "prepublishOnly": "npm test"
@@ -58,6 +65,7 @@
   },
   "packageManager": "npm@10.8.2",
   "devDependencies": {
+    "@types/node": "^22.20.1",
     "typescript": "^5.9.2"
   },
   "directories": {

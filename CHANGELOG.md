@@ -4,6 +4,22 @@ All notable changes to this project will be documented here. This project follow
 
 ## [Unreleased]
 
+### Added
+
+- Resumable long-audio jobs with bounded concurrency, progress events, partial results, and per-chunk persistence.
+- Codec-safe PCM WAV segmentation, optional VAD-assisted boundaries, and Node.js FFmpeg normalization through the `groq-dictation-kit/node` export.
+- Timestamp-aware overlap stitching with lexical fallback limited to actual overlap regions.
+- Durable `FileJobStore`, portable `JobStore`, `AudioProcessor`, and `ObjectStorage` adapters.
+- HTTPS URL transcription, temporary private-storage transcription, and asynchronous Groq audio Batch support.
+- Long-form cleanup modes, bounded cleanup windows, deletion/expansion/protected-term guards, and canonical raw transcripts.
+- Adaptive transcription timeouts, retry/backoff behavior, content fingerprints, account-rate pacing, and stable long-job errors.
+- Deterministic >25 MiB and >100 MiB benchmark plus an explicit live long-audio benchmark command.
+
+### Changed
+
+- Direct multipart uploads now use a conservative 20 MiB safety limit; larger recordings are directed to the long-audio or URL APIs.
+- Browser recording can stream MediaRecorder transport fragments through `onChunk` while optionally retaining the complete recording.
+
 ## [0.2.0] - 2026-08-09
 
 ### Added

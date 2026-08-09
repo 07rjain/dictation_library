@@ -34,14 +34,18 @@ npm install groq-dictation-kit
 1. `BrowserRecorder` captures a compact Opus/WebM recording.
 2. `DictationPipeline` sends the audio to Groq Whisper.
 3. A strict cleanup prompt removes filler and self-corrections without answering the dictated text.
-4. The final result includes raw text, cleaned text, models used, fallbacks, and stage timings.
+4. Long recordings can use codec-aware overlapping chunks, bounded concurrency, resumable manifests, and timestamp-aware stitching.
+5. The final result includes raw text, cleaned text, models used, fallbacks, and stage timings.
 
 The speed-oriented defaults are:
 
 - Transcription: `whisper-large-v3-turbo`
 - Cleanup: `openai/gpt-oss-20b` with low reasoning
 - Cleanup fallback: `qwen/qwen3.6-27b`
-- Request timeout: 20 seconds
+- Direct multipart safety limit: 20 MiB
+- Adaptive request timeout: 20–180 seconds based on audio duration or size
+- Long interactive chunks: 60 seconds with 2 seconds of overlap
+- Long offline chunks: up to 10 minutes, automatically capped below 20 MiB
 
 ## Customize defaults safely
 
@@ -138,6 +142,143 @@ const result = await pipeline.dictate(
 console.log(result.text, result.timings);
 ```
 
+## Long recordings and files over 25 MB
+
+`dictateLong` is additive: the original `dictate` API remains unchanged. Long-form output defaults to the raw transcript so an LLM cannot silently compress a large recording.
+
+Use `dictateAuto` when the library should inspect the input and retain the direct path below 20 MiB or select chunking above it:
+
+```ts
+const result = await pipeline.dictateAuto(audio, {
+  processor: new FfmpegAudioProcessor(),
+});
+```
+
+`routeAudio(audio, policy)` exposes the same decision without executing it. Its possible decisions are `direct`, `stored-url`, `chunked`, and `batch`; URL and Batch execution remain explicit because they require storage and retention choices.
+
+```ts
+const result = await pipeline.dictateLong(
+  { data: uploadedAudioBlob, filename: "meeting.wav" },
+  {
+    mode: "interactive",
+    concurrency: 2,
+    requestsPerMinute: 18, // useful for an account with a 20 RPM allowance
+    cleanup: { mode: "verbatim" },
+  },
+);
+
+console.log(result.rawTranscript);
+console.log(result.chunks);
+```
+
+The dependency-free built-in processor segments PCM WAV files. On a Node.js server, use FFmpeg for WebM, MP4, FLAC, stereo/high-rate WAV, and other supported inputs:
+
+```ts
+import { DictationPipeline } from "groq-dictation-kit";
+import { FfmpegAudioProcessor } from "groq-dictation-kit/node";
+
+const result = await pipeline.dictateLong(audio, {
+  processor: new FfmpegAudioProcessor({ output: "flac" }),
+  targetChunkMs: 60_000,
+  overlapMs: 2_000,
+});
+```
+
+FFmpeg converts provider-bound chunks to 16 kHz mono. FLAC minimizes upload size; WAV is available when encoding latency matters more than bandwidth.
+
+The library never splits compressed containers at arbitrary byte offsets. Supply an `AudioProcessor` when the built-in WAV processor cannot decode the input.
+
+## Observable and resumable jobs
+
+```ts
+const job = pipeline.createJob(audio, {
+  targetChunkMs: 60_000,
+  overlapMs: 2_000,
+  concurrency: 2,
+});
+
+for await (const event of job.events()) {
+  console.log(event.type);
+}
+
+const result = await job.result();
+```
+
+Successful chunks are persisted immediately. A failed job can retry only missing chunks:
+
+```ts
+const resumed = pipeline.resumeJob(jobId, audio, { store, processor });
+const result = await resumed.result();
+```
+
+The default `MemoryJobStore` survives within one pipeline process. For restart recovery on a Node.js host:
+
+```ts
+import { FileJobStore, FfmpegAudioProcessor } from "groq-dictation-kit/node";
+
+const store = new FileJobStore("/explicit/private/dictation-manifests");
+const processor = new FfmpegAudioProcessor();
+
+const job = pipeline.createJob(audio, { store, processor });
+```
+
+For horizontally scaled production systems, implement the exported `JobStore` interface using your database. Manifests include a bounded content fingerprint and reject mismatched resume audio.
+
+## URL and private object-storage transcription
+
+Groq accepts an HTTPS `url` instead of a multipart attachment:
+
+```ts
+const transcription = await pipeline.transcribeUrl(shortLivedSignedUrl, {
+  language: "en",
+});
+```
+
+Or implement `ObjectStorage` and let the pipeline upload, sign, transcribe, and delete the temporary object:
+
+```ts
+const transcription = await pipeline.transcribeStored(audio, storage, {
+  signedUrlExpiresInSeconds: 300,
+});
+```
+
+URL ingestion is not treated as unlimited. Applications should still chunk audio above the account limit or when they need progress and recovery.
+
+## Background Batch transcription
+
+Batch is for asynchronous workloads, not interactive dictation. It requires HTTPS audio URLs and may retain processing artifacts:
+
+```ts
+const batch = await pipeline.batches.submitAudio([
+  { id: "meeting-001", url: signedAudioUrl, language: "en" },
+]);
+
+const completed = await pipeline.batches.wait(batch.id);
+const lines = await pipeline.batches.results(completed);
+await pipeline.batches.deleteArtifacts(completed);
+```
+
+Set `zeroDataRetention: true` on `DictationPipeline` to make Batch calls fail locally with `BATCH_DISABLED_FOR_ZDR`.
+
+## Cleanup safety modes
+
+- `dictation`: removes fillers and false starts; this remains the short-audio default.
+- `verbatim`: preserves spoken words and repairs punctuation/casing.
+- `none`: returns the canonical Whisper transcript; this is the long-audio default.
+- `summary`: produces an explicitly requested summary rather than pretending it is a transcript.
+
+For non-summary cleanup, deletion, expansion, numbers, URLs, emails, and digit-bearing identifiers are guarded. Rejected cleanup returns the original window and sets `cleanupRejected`.
+
+Long cleanup runs in bounded windows instead of sending an entire meeting to one completion request.
+
+## Accuracy modes
+
+- `independent`: fastest and fully parallel.
+- `retry-ambiguous`: default; independently transcribes chunks, then retries only low-confidence boundaries with a bounded tail of prior context.
+- `sequential`: concurrency one with previous context for accuracy-sensitive workloads.
+
+`VadWavAudioProcessor` can move PCM WAV boundaries toward quiet frames without removing any part of the audio timeline.
+
 ## Hide context latency while the user speaks
 
 Start the session at the same time as microphone recording. The context provider begins immediately and overlaps the recording:
@@ -168,6 +309,8 @@ For a local-only BYOK prototype, users may enter their own key and opt into dire
 
 The included benchmark server is a local development harness, not a production authentication layer. Before deploying it publicly, add user authentication, per-user rate limiting, request logging policies, abuse controls, and your own data-retention disclosure. Never commit `.env` files or expose a shared Groq key to frontend code.
 
+The public BYOK demo is intended for short, ephemeral dictation. Production long-audio applications should use a server, private storage, durable manifests, and an explicit deletion policy.
+
 ## Accuracy mode
 
 Use `whisper-large-v3` instead of the Turbo model when accuracy matters more than the lowest latency:
@@ -197,6 +340,20 @@ When no audio path is supplied, the command generates a short WAV fixture and pe
 GROQ_API_KEY=your_key npm run test:live
 ```
 
+Run the deterministic local large-file benchmark, including >25 MiB and >100 MiB inputs:
+
+```bash
+npm run benchmark:long
+```
+
+Run an explicit live long-audio benchmark:
+
+```bash
+GROQ_API_KEY=your_key npm run test:long:live -- /absolute/path/to/ten-minute-audio.flac
+```
+
+This can make many provider requests. Review the chunk count and account limits before running it. See [BENCHMARKS.md](./BENCHMARKS.md) for methodology and the latest local results.
+
 The repository's `Live Groq smoke test` GitHub Actions workflow runs `test.wav` after every push to `main`. The fixture says “Hello, um, this is a live test,” and the workflow verifies both the raw Whisper transcript and the cleaned result, including removal of the filler word. It reads `GROQ_API_KEY` from GitHub Actions secrets and is intentionally not triggered for pull requests, so forked code cannot access the credential. Because this makes live Groq requests, each `main` push consumes a small amount of the account's quota.
 
 ## Public API
@@ -205,6 +362,10 @@ The repository's `Live Groq smoke test` GitHub Actions workflow runs `test.wav` 
 - `DictationSession`: starts context collection before the recording finishes.
 - `GroqClient`: lower-level transcription and cleanup operations.
 - `BrowserRecorder`: microphone capture through the MediaRecorder API.
+- `LongJob`: progress, partial failure, resumption, and results for chunked audio.
+- `WavAudioProcessor` / `VadWavAudioProcessor`: browser-compatible PCM WAV segmentation.
+- `FfmpegAudioProcessor` / `FileJobStore`: Node-only adapters from `groq-dictation-kit/node`.
+- `GroqBatchClient`: asynchronous URL-based audio Batch jobs.
 - `DictationError`: typed errors with stable `code` and optional HTTP `status`.
 
 All exported TypeScript types are available from the package root.

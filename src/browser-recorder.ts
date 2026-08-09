@@ -12,6 +12,9 @@ export class BrowserRecorder {
   private recorder: MediaRecorder | undefined;
   private stream: MediaStream | undefined;
   private chunks: Blob[] = [];
+  private chunkCount = 0;
+  private pendingChunkHandlers: Promise<void>[] = [];
+  private chunkHandlerError: unknown;
   private startedAt = 0;
 
   constructor(options: BrowserRecorderOptions = {}) {
@@ -36,12 +39,23 @@ export class BrowserRecorder {
     );
     const mimeType = chooseMimeType(this.options.mimeTypes ?? DEFAULT_BROWSER_MIME_TYPES);
     this.chunks = [];
+    this.chunkCount = 0;
+    this.pendingChunkHandlers = [];
+    this.chunkHandlerError = undefined;
     this.recorder = new MediaRecorder(this.stream, {
       ...(mimeType ? { mimeType } : {}),
       audioBitsPerSecond: this.options.audioBitsPerSecond ?? DEFAULT_BROWSER_AUDIO_BITS_PER_SECOND,
     });
     this.recorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) this.chunks.push(event.data);
+      if (event.data.size === 0) return;
+      const sequence = this.chunkCount++;
+      if (this.options.retainAudio !== false) this.chunks.push(event.data);
+      if (this.options.onChunk) {
+        const pending = Promise.resolve(this.options.onChunk(event.data, sequence)).catch((error) => {
+          this.chunkHandlerError ??= error;
+        });
+        this.pendingChunkHandlers.push(pending);
+      }
     });
     this.startedAt = performance.now();
     this.recorder.start(this.options.timesliceMs ?? DEFAULT_BROWSER_TIMESLICE_MS);
@@ -57,7 +71,17 @@ export class BrowserRecorder {
         this.release();
         reject(new DictationError("Browser audio recording failed.", { code: "RECORDING_FAILED" }));
       }, { once: true });
-      recorder.addEventListener("stop", () => {
+      recorder.addEventListener("stop", async () => {
+        await Promise.all(this.pendingChunkHandlers);
+        if (this.chunkHandlerError) {
+          const cause = this.chunkHandlerError;
+          this.release();
+          reject(new DictationError("Incremental recording upload failed.", {
+            code: "RECORDING_SINK_FAILED",
+            cause,
+          }));
+          return;
+        }
         const mimeType = recorder.mimeType || this.chunks[0]?.type || "audio/webm";
         const blob = new Blob(this.chunks, { type: mimeType });
         const durationMs = performance.now() - this.startedAt;
@@ -67,7 +91,14 @@ export class BrowserRecorder {
             ? "dictation.m4a"
             : "dictation.webm";
         this.release();
-        resolve({ blob, mimeType, durationMs, filename });
+        resolve({
+          blob,
+          mimeType,
+          durationMs,
+          filename,
+          chunkCount: this.chunkCount,
+          retainedAudio: this.options.retainAudio !== false,
+        });
       }, { once: true });
       recorder.stop();
     });

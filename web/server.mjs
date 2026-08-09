@@ -10,7 +10,7 @@ await loadEnv(join(root, ".env"));
 
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
-const maxAudioBytes = 25 * 1024 * 1024;
+const maxAudioBytes = 20 * 1024 * 1024;
 const apiKey = process.env.GROQ_API_KEY?.trim();
 
 const server = createServer(async (request, response) => {
@@ -95,7 +95,7 @@ const server = createServer(async (request, response) => {
     }
     json(response, 405, { error: "Method not allowed." });
   } catch (error) {
-    const status = error?.code === "PAYLOAD_TOO_LARGE" ? 413 : 500;
+    const status = error?.code === "PAYLOAD_TOO_LARGE" || error?.code === "AUDIO_TOO_LARGE" ? 413 : 500;
     json(response, status, {
       error: error instanceof Error ? error.message : "Unexpected server error.",
       code: error?.code || "SERVER_ERROR",
@@ -143,7 +143,7 @@ function readRequestBody(request, limit) {
     request.on("data", (chunk) => {
       size += chunk.length;
       if (size > limit) {
-        const error = new Error("Audio exceeds the 25 MB request limit.");
+        const error = new Error("Audio exceeds the 20 MiB direct-request limit. Use the long-audio API.");
         error.code = "PAYLOAD_TOO_LARGE";
         reject(error);
         request.destroy();

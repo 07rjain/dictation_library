@@ -17,3 +17,7 @@ Use GitHub's private vulnerability reporting feature for this repository. Includ
 - Applications using this package are responsible for authentication, rate limiting, consent, retention, and deletion policies.
 - Audio, transcripts, screen context, and custom vocabulary should be treated as potentially sensitive user data.
 - The included benchmark server is intended for local development, not unauthenticated public deployment.
+- Long-audio manifests contain transcripts and must be stored in a private location with an explicit retention policy.
+- Signed audio URLs should use HTTPS, short expirations, least-privilege access, and deletion after provider ingestion.
+- Groq Batch stores input and result artifacts. Use `zeroDataRetention: true` to disable Batch locally when strict ZDR is required.
+- MediaRecorder `onChunk` fragments are transport parts and must not be exposed publicly or assumed to be independently playable files.
