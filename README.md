@@ -19,7 +19,7 @@ The website uses the published `groq-dictation-kit` package. Bring your own Groq
 - npm: [`groq-dictation-kit`](https://www.npmjs.com/package/groq-dictation-kit)
 - Live website: [`07rjain.github.io/dictation_library`](https://07rjain.github.io/dictation_library/)
 - Source and issues: [`07rjain/dictation_library`](https://github.com/07rjain/dictation_library)
-- Current release: [`v0.2.0`](https://github.com/07rjain/dictation_library/releases/tag/v0.2.0)
+- Current release: [`v0.3.0`](https://github.com/07rjain/dictation_library/releases/tag/v0.3.0)
 - Runtime: ESM with bundled TypeScript declarations; Node.js 20 or newer
 - License: MIT
 

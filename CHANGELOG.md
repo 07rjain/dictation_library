@@ -4,6 +4,8 @@ All notable changes to this project will be documented here. This project follow
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-09
+
 ### Added
 
 - Resumable long-audio jobs with bounded concurrency, progress events, partial results, and per-chunk persistence.
