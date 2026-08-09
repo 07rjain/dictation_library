@@ -269,6 +269,10 @@ test("aborting a long job cancels provider work and persists aborted status", as
     apiKey: "test",
     retry: { maxAttempts: 1 },
     fetch: async (_url, init) => new Promise((resolve, reject) => {
+      if (init.signal.aborted) {
+        reject(init.signal.reason);
+        return;
+      }
       init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
     }),
   });
