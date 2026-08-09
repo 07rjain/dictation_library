@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   DictationError,
   DictationPipeline,
+  MemoryJobStore,
   VadWavAudioProcessor,
   WavAudioProcessor,
   inspectAudio,
@@ -112,6 +113,77 @@ test("persists successful chunks and resumes only failed chunks", async () => {
   assert.equal(calls.get(2), 1);
 });
 
+test("reuses a completed job only when the original audio source matches", async () => {
+  let calls = 0;
+  const pipeline = new DictationPipeline({
+    apiKey: "test",
+    retry: { maxAttempts: 1 },
+    fetch: async () => {
+      calls += 1;
+      return Response.json({ text: `chunk ${calls}`, segments: [] });
+    },
+  });
+  const first = pipeline.createJob(wavAudio, {
+    jobId: "completed_source_check",
+    targetChunkMs: 1_000,
+    overlapMs: 200,
+  });
+  const original = await first.result();
+  const callsAfterCompletion = calls;
+  const cached = await pipeline.resumeJob(first.id, wavAudio, {
+    targetChunkMs: 1_000,
+    overlapMs: 200,
+  }).result();
+  assert.deepEqual(cached, original);
+  assert.equal(calls, callsAfterCompletion);
+
+  const changedAudio = {
+    data: new Blob([wavBytes, new Uint8Array([0])], { type: "audio/wav" }),
+    filename: "changed.wav",
+  };
+  await assert.rejects(
+    pipeline.resumeJob(first.id, changedAudio).result(),
+    (error) => error instanceof DictationError && error.code === "JOB_SOURCE_MISMATCH",
+  );
+  assert.equal(calls, callsAfterCompletion);
+});
+
+test("reports a missing manifest when inspecting a job that has not started", async () => {
+  const pipeline = new DictationPipeline({
+    apiKey: "test",
+    fetch: async () => { throw new Error("must not call provider"); },
+  });
+  const job = pipeline.createJob(wavAudio, { jobId: "not_started" });
+  await assert.rejects(
+    job.inspect(),
+    (error) => error instanceof DictationError && error.code === "JOB_NOT_FOUND",
+  );
+});
+
+test("MemoryJobStore isolates saved and loaded manifests from caller mutation", async () => {
+  const store = new MemoryJobStore();
+  const manifest = {
+    version: 1,
+    jobId: "clone_check",
+    status: "pending",
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+    mode: "interactive",
+    source: { sizeBytes: 1 },
+    processor: "test",
+    targetChunkMs: 1_000,
+    overlapMs: 0,
+    concurrency: 1,
+    chunks: [],
+  };
+  await store.save(manifest);
+  manifest.status = "failed";
+  const firstLoad = await store.load("clone_check");
+  assert.equal(firstLoad.status, "pending");
+  firstLoad.status = "completed";
+  assert.equal((await store.load("clone_check")).status, "pending");
+});
+
 test("rejects oversized direct uploads before calling the provider", async () => {
   let called = false;
   const pipeline = new DictationPipeline({
@@ -138,6 +210,60 @@ test("cleanup guard preserves raw text after excessive deletion", async () => {
   const result = await pipeline.cleanup(source, { mode: "verbatim", maxDeletionRatio: 0.1 });
   assert.equal(result.text, source);
   assert.equal(result.rejected, true);
+});
+
+test("long cleanup uses bounded windows and preserves every rejected window", async () => {
+  const longText = `${"Important transcript details must remain unchanged. ".repeat(300)}END_MARKER`;
+  let cleanupCalls = 0;
+  const pipeline = new DictationPipeline({
+    apiKey: "test",
+    retry: { maxAttempts: 1 },
+    fetch: async (url) => {
+      if (String(url).endsWith("/audio/transcriptions")) {
+        return Response.json({ text: longText, segments: [] });
+      }
+      cleanupCalls += 1;
+      return Response.json({ choices: [{ message: { content: "Tiny." } }] });
+    },
+  });
+  const result = await pipeline.dictateLong(wavAudio, {
+    targetChunkMs: 10_000,
+    overlapMs: 0,
+    cleanup: { mode: "verbatim", maxDeletionRatio: 0.05 },
+  });
+  assert.ok(cleanupCalls >= 2);
+  assert.equal(result.cleanupRejected, true);
+  assert.ok(result.text.includes("END_MARKER"));
+  assert.ok(result.text.length >= longText.length);
+});
+
+test("sequential accuracy mode carries prior text and never overlaps requests", async () => {
+  let active = 0;
+  let maximumActive = 0;
+  const prompts = [];
+  const pipeline = new DictationPipeline({
+    apiKey: "test",
+    retry: { maxAttempts: 1 },
+    fetch: async (_url, init) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      prompts.push(init.body.get("prompt"));
+      const index = Number(init.body.get("file").name.match(/(\d+)/)?.[1] ?? 0);
+      await new Promise((resolve) => setTimeout(resolve, 3));
+      active -= 1;
+      return Response.json({ text: `prior context ${index}`, segments: [] });
+    },
+  });
+  await pipeline.dictateLong(wavAudio, {
+    targetChunkMs: 1_000,
+    overlapMs: 200,
+    concurrency: 8,
+    accuracyMode: "sequential",
+  });
+  assert.equal(maximumActive, 1);
+  assert.equal(prompts[0], null);
+  assert.ok(prompts[1].includes("prior context 0"));
+  assert.ok(prompts[2].includes("prior context 1"));
 });
 
 test("stitching deduplicates only when chunks have temporal overlap", () => {

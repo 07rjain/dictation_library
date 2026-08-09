@@ -88,6 +88,7 @@ export class LongJob implements LongDictationJob {
     try {
       const existing = await this.store.load(this.id);
       if (existing?.status === "completed" && existing.result) {
+        assertSourceMatches(existing, await this.processor.inspect(this.audio));
         this.manifest = existing;
         this.stream.emit({ type: "job.completed", jobId: this.id, result: existing.result });
         this.stream.close();
@@ -361,15 +362,13 @@ function validateAndResumeManifest(
   chunks: readonly AudioChunk[],
   source: { sizeBytes: number; fingerprint?: string },
 ): LongJobManifest {
-  const fingerprintMismatch = manifest.source.fingerprint !== undefined &&
-    source.fingerprint !== undefined && manifest.source.fingerprint !== source.fingerprint;
+  assertSourceMatches(manifest, source);
   const layoutMismatch = manifest.chunks.some((record, index) => {
     const chunk = chunks[index];
     return !chunk || record.startMs !== chunk.startMs || record.endMs !== chunk.endMs ||
       record.overlapBeforeMs !== chunk.overlapBeforeMs;
   });
   if (
-    manifest.source.sizeBytes !== source.sizeBytes || fingerprintMismatch ||
     manifest.chunks.length !== chunks.length || layoutMismatch
   ) {
     throw new DictationError("Resume input does not match the original job source.", {
@@ -381,6 +380,20 @@ function validateAndResumeManifest(
     if (chunk.status === "processing" || chunk.status === "failed") chunk.status = "pending";
   }
   return manifest;
+}
+
+function assertSourceMatches(
+  manifest: LongJobManifest,
+  source: { sizeBytes: number; fingerprint?: string },
+): void {
+  const fingerprintMismatch = manifest.source.fingerprint !== undefined &&
+    source.fingerprint !== undefined && manifest.source.fingerprint !== source.fingerprint;
+  if (manifest.source.sizeBytes !== source.sizeBytes || fingerprintMismatch) {
+    throw new DictationError("Resume input does not match the original job source.", {
+      code: "JOB_SOURCE_MISMATCH",
+      details: { jobId: manifest.jobId },
+    });
+  }
 }
 
 function toChunkResults(records: readonly LongChunkRecord[]): LongChunkResult[] {

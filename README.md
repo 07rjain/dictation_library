@@ -29,6 +29,30 @@ The website uses the published `groq-dictation-kit` package. Bring your own Groq
 npm install groq-dictation-kit
 ```
 
+The minimal JavaScript integration remains:
+
+```js
+import { DictationPipeline } from "groq-dictation-kit";
+
+const pipeline = new DictationPipeline({ apiKey });
+const result = await pipeline.dictate(audio);
+```
+
+`audio` is an `AudioInput`: `{ data: Blob, filename?: string, durationMs?: number }`. In a browser, pass the `Blob` returned by `MediaRecorder`. In Node.js, wrap uploaded bytes with `new Blob([buffer], { type: mimeType })`. Supplying `filename` and `durationMs` improves format detection, routing, and timeout selection.
+
+### Choose the right API
+
+| Workload | API | Behavior |
+| --- | --- | --- |
+| Short interactive dictation | `pipeline.dictate(audio)` | Fast transcription plus guarded cleanup |
+| Automatic short/long selection | `pipeline.dictateAuto(audio, options)` | Direct below the safety thresholds; codec-aware chunks otherwise |
+| Long, observable, resumable audio | `pipeline.createJob(audio, options)` | Progress events, durable manifests, partial recovery |
+| Transcription without cleanup | `pipeline.transcribe(audio)` | Lower-level Whisper result |
+| Private object already on HTTPS | `pipeline.transcribeUrl(url)` | Provider fetches the signed URL |
+| Deferred bulk work | `pipeline.batches` | Asynchronous Batch lifecycle; not for live dictation |
+
+Use `dictateLong` when you want the long-audio result directly without managing the job object. URL and Batch paths are explicit because storage retention and deletion are application decisions.
+
 ## Pipeline
 
 1. `BrowserRecorder` captures a compact Opus/WebM recording.
@@ -101,12 +125,19 @@ Advanced integrations can provide `cleanup.messageBuilder` to replace the comple
 
 Configuration precedence is: per-call flat compatibility options, per-call nested options, constructor defaults, then built-in defaults.
 
-## Install and verify
+## Development and verification
 
 ```bash
 npm install
 npm test
+npm run benchmark:long
+npm audit --omit=dev
+npm pack --dry-run
 ```
+
+`npm test` builds the TypeScript package and runs the deterministic suite without contacting Groq. It covers short transcription and cleanup, configuration precedence, retries/timeouts, codec-safe chunking, overlap stitching, cleanup guards and windows, long-job progress/resume/abort/source matching, storage deletion, Batch lifecycle, adapter permissions, and FFmpeg normalization when FFmpeg is installed.
+
+Use `npm run test:live` only when you intentionally want a real provider request. Live credentials are never required for the deterministic suite.
 
 ## Run the benchmark web app
 
@@ -149,10 +180,16 @@ console.log(result.text, result.timings);
 Use `dictateAuto` when the library should inspect the input and retain the direct path for recordings no longer than 90 seconds and below 20 MiB, or select chunking otherwise:
 
 ```ts
+import { DictationPipeline } from "groq-dictation-kit";
+import { FfmpegAudioProcessor } from "groq-dictation-kit/node";
+
+const pipeline = new DictationPipeline({ apiKey: process.env.GROQ_API_KEY! });
 const result = await pipeline.dictateAuto(audio, {
   processor: new FfmpegAudioProcessor(),
 });
 ```
+
+The built-in browser-compatible long-audio processor accepts PCM WAV. Compressed WebM/Opus from `BrowserRecorder` needs the Node.js FFmpeg processor (or your own `AudioProcessor`) once automatic routing selects the chunked path.
 
 `routeAudio(audio, policy)` exposes the same decision without executing it. Its possible decisions are `direct`, `stored-url`, `chunked`, and `batch`; URL and Batch execution remain explicit because they require storage and retention choices.
 
@@ -198,7 +235,9 @@ const job = pipeline.createJob(audio, {
 });
 
 for await (const event of job.events()) {
-  console.log(event.type);
+  if (event.type === "job.progress") {
+    console.log(`${event.completed}/${event.total} chunks complete`);
+  }
 }
 
 const result = await job.result();
@@ -212,6 +251,8 @@ const result = await resumed.result();
 ```
 
 When a job is partial, `CHUNK_TRANSCRIPTION_FAILED.details` includes the completed chunks and a best-effort partial transcript. `job.inspect()` exposes the complete durable manifest. Segment timestamps returned in the final result are offset to the absolute recording timeline.
+
+Reusing a job ID with different source audio fails with `JOB_SOURCE_MISMATCH`, including after the original job has completed. This prevents a cached transcript from being associated with the wrong recording.
 
 The default `MemoryJobStore` survives within one pipeline process. For restart recovery on a Node.js host:
 
@@ -261,6 +302,36 @@ await pipeline.batches.deleteArtifacts(completed);
 ```
 
 Set `zeroDataRetention: true` on `DictationPipeline` to make Batch calls fail locally with `BATCH_DISABLED_FOR_ZDR`.
+
+## Errors and recovery
+
+All expected library failures use `DictationError`, with a stable `code` and optional HTTP `status`:
+
+```ts
+import { DictationError } from "groq-dictation-kit";
+
+try {
+  await pipeline.dictateAuto(audio, options);
+} catch (error) {
+  if (error instanceof DictationError && error.code === "CHUNK_TRANSCRIPTION_FAILED") {
+    const details = error.details as { partialTranscript?: string } | undefined;
+    const partial = details?.partialTranscript;
+    // Persist the job ID, show the partial text, and offer resume.
+  }
+  throw error;
+}
+```
+
+Common recovery paths:
+
+- `AUDIO_TOO_LARGE`: use `dictateAuto`, `dictateLong`, or signed-URL ingestion.
+- `AUDIO_PROCESSING_UNAVAILABLE`: supply a processor that supports the input codec; use `FfmpegAudioProcessor` on Node.js.
+- `CHUNK_TRANSCRIPTION_FAILED`: preserve the job ID and resume with the same audio, store, processor, and chunk layout.
+- `JOB_SOURCE_MISMATCH`: do not reuse that job ID for a different recording.
+- `RATE_LIMITED`: lower concurrency or set `requestsPerMinute` below the account allowance.
+- `REQUEST_TIMEOUT`: retry safely; completed long-job chunks remain reusable.
+- `INSECURE_AUDIO_URL`: issue a short-lived HTTPS URL.
+- `BATCH_DISABLED_FOR_ZDR`: use the interactive or URL path when strict zero-data retention is required.
 
 ## Cleanup safety modes
 

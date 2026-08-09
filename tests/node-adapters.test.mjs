@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -28,6 +28,8 @@ test("FileJobStore persists manifests across instances", async () => {
     };
     await new FileJobStore(directory).save(manifest);
     assert.deepEqual(await new FileJobStore(directory).load(manifest.jobId), manifest);
+    assert.equal((await stat(join(directory, `${manifest.jobId}.json`))).mode & 0o777, 0o600);
+    await assert.rejects(new FileJobStore(directory).load("../escape"), /Invalid job identifier/);
     await new FileJobStore(directory).delete(manifest.jobId);
     assert.equal(await new FileJobStore(directory).load(manifest.jobId), undefined);
   } finally {

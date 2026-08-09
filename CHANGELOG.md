@@ -4,6 +4,14 @@ All notable changes to this project will be documented here. This project follow
 
 ## [Unreleased]
 
+### Fixed
+
+- Completed resumable jobs now verify the supplied audio source before returning a cached result.
+
+### Testing
+
+- Expanded deterministic coverage for completed-job reuse, manifest isolation, cleanup windowing, sequential context, temporary-storage cleanup, Batch lifecycle and validation, and file-store safety.
+
 ## [0.3.0] - 2026-08-09
 
 ### Added
