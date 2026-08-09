@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Try Groq Dictation Kit in your browser with your own Groq API key." />
     <meta name="theme-color" content="#101714" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.groq.com https://esm.sh; script-src 'self' https://esm.sh; style-src 'self'; img-src 'self' data:; media-src blob:; object-src 'none'; base-uri 'self'; form-action 'none'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.groq.com; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src blob:; object-src 'none'; base-uri 'self'; form-action 'none'" />
     <title>Groq Dictation Kit — Live Demo</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -19,14 +19,14 @@
         <div class="nav-links">
           <a href="https://www.npmjs.com/package/groq-dictation-kit" rel="noreferrer">npm</a>
           <a href="https://github.com/07rjain/dictation_library" rel="noreferrer">GitHub</a>
-          <span class="version">v0.3.0</span>
+          <span class="version">main · live preview</span>
         </div>
       </nav>
 
       <header class="hero">
         <p class="eyebrow">Open-source voice typing · Powered by your Groq account</p>
         <h1>Speak naturally.<br /><em>Keep the clean version.</em></h1>
-        <p class="hero-copy">Record in your browser, transcribe with Whisper Large v3 Turbo, and remove filler words and false starts with a fast cleanup model.</p>
+        <p class="hero-copy">Watch your words appear while you speak—or use the original single-upload mode—then remove filler words and false starts with a fast cleanup model.</p>
         <div class="privacy-line">
           <span class="pulse"></span>
           No account, database, analytics, or server proxy. Your key stays in this tab.
@@ -83,6 +83,13 @@
             </span>
             <input id="exact-wording" type="checkbox" />
           </label>
+          <label class="switch-row live-switch">
+            <span>
+              <strong>Live partials <i>Preview</i></strong>
+              <small>Updates about every 5 seconds · creates more Groq requests</small>
+            </span>
+            <input id="live-mode" type="checkbox" />
+          </label>
         </aside>
 
         <section class="dictation-panel">
@@ -112,7 +119,7 @@
             </div>
             <button id="copy-button" class="text-button" type="button" disabled>Copy text</button>
           </div>
-          <div id="output" class="output empty">Your cleaned dictation will appear here.</div>
+          <div id="output" class="output empty" aria-live="polite">Your cleaned dictation will appear here.</div>
           <details>
             <summary>View raw Whisper output</summary>
             <pre id="raw-output">Nothing transcribed yet.</pre>
@@ -141,14 +148,17 @@
         <div>
           <p class="micro-label">Use it in your project</p>
           <h2>One library, any interface.</h2>
-          <p>The live demo above imports the same published npm package shown here.</p>
+          <p>The demo is built from the current library source. The original API remains unchanged, with near-live sessions available as an additive preview.</p>
         </div>
         <pre><code><span>npm install</span> groq-dictation-kit
 
 <span>import</span> { DictationPipeline } <span>from</span> "groq-dictation-kit";
 
 <span>const</span> pipeline = <span>new</span> DictationPipeline({ apiKey });
-<span>const</span> result = <span>await</span> pipeline.dictate(audio);</code></pre>
+<span>const</span> result = <span>await</span> pipeline.dictate(audio);
+
+<span>// Near-live partials</span>
+<span>const</span> session = pipeline.startLiveConversation({ onEvent });</code></pre>
       </section>
 
       <footer>

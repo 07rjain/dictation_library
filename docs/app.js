@@ -1,7 +1,8 @@
 import {
+  BrowserLiveRecorder,
   BrowserRecorder,
   DictationPipeline,
-} from "https://esm.sh/groq-dictation-kit@0.3.0?bundle&target=es2022";
+} from "./library/index.js";
 
 const elements = {
   apiKey: document.querySelector("#api-key"),
@@ -10,6 +11,7 @@ const elements = {
   language: document.querySelector("#language"),
   context: document.querySelector("#context"),
   exactWording: document.querySelector("#exact-wording"),
+  liveMode: document.querySelector("#live-mode"),
   recordButton: document.querySelector("#record-button"),
   recordLabel: document.querySelector("#record-button span"),
   state: document.querySelector("#state span"),
@@ -26,6 +28,7 @@ const elements = {
 let recorder = new BrowserRecorder();
 let activeSession;
 let activePipeline;
+let activeLiveMode = false;
 let timerId;
 let startedAt = 0;
 let finalText = "";
@@ -38,6 +41,12 @@ elements.toggleKey.addEventListener("click", () => {
 });
 
 elements.recordButton.addEventListener("click", toggleRecording);
+elements.liveMode.addEventListener("change", () => {
+  if (recorder.isRecording) return;
+  setNotice(elements.liveMode.checked
+    ? "Live partials will update about every 5 seconds. Short windows create more Groq requests."
+    : "Single-upload mode sends audio only after you stop recording.");
+});
 document.addEventListener("keydown", (event) => {
   if (event.code !== "Space" || event.repeat || isTypingTarget(event.target)) return;
   event.preventDefault();
@@ -77,11 +86,28 @@ async function startRecording() {
       transcriptionModel: elements.model.value,
       onEvent: updatePipelineState,
     });
-    activeSession = activePipeline.startSession({
+    activeLiveMode = elements.liveMode.checked;
+    const context = {
       appName: "Groq Dictation Kit demo",
       fieldType: "document",
       activity: elements.context.value.trim() || "Writing a message",
-    });
+    };
+    if (activeLiveMode) {
+      activeSession = activePipeline.startLiveConversation({
+        transcriptionModel: elements.model.value,
+        language: elements.language.value || undefined,
+        preserveExactWording: elements.exactWording.checked,
+        context,
+        onEvent: updateLiveState,
+      });
+      recorder = new BrowserLiveRecorder({
+        windowMs: 5_000,
+        onWindow: (audio) => activeSession.push(audio),
+      });
+    } else {
+      activeSession = activePipeline.startSession(context);
+      recorder = new BrowserRecorder();
+    }
 
     setNotice("Requesting microphone access…");
     await recorder.start();
@@ -89,9 +115,15 @@ async function startRecording() {
     timerId = window.setInterval(updateTimer, 50);
     elements.recordButton.classList.add("recording");
     elements.visualizer.classList.add("active");
-    elements.recordLabel.textContent = "Stop & transcribe";
+    elements.recordLabel.textContent = activeLiveMode ? "Stop & finish" : "Stop & transcribe";
     elements.state.textContent = "Listening";
-    setNotice("Speak naturally. You can correct yourself mid-sentence.");
+    if (activeLiveMode) {
+      elements.output.textContent = "Listening for the first live window…";
+      elements.output.classList.add("empty", "streaming");
+      setNotice("Keep speaking. Partial text will appear about every 5 seconds.");
+    } else {
+      setNotice("Speak naturally. You can correct yourself mid-sentence.");
+    }
   } catch (error) {
     showError(error);
   }
@@ -107,14 +139,16 @@ async function stopAndTranscribe() {
 
   try {
     const recording = await recorder.stop();
-    const result = await activeSession.finish(
-      { data: recording.blob, filename: recording.filename },
-      {
-        transcriptionModel: elements.model.value,
-        language: elements.language.value || undefined,
-        preserveExactWording: elements.exactWording.checked,
-      },
-    );
+    const result = activeLiveMode
+      ? await activeSession.finish()
+      : await activeSession.finish(
+          { data: recording.blob, filename: recording.filename },
+          {
+            transcriptionModel: elements.model.value,
+            language: elements.language.value || undefined,
+            preserveExactWording: elements.exactWording.checked,
+          },
+        );
     renderResult(result, recording);
     elements.state.textContent = "Complete";
     setNotice("Done. Your key remains only in this tab.");
@@ -125,7 +159,23 @@ async function stopAndTranscribe() {
     elements.recordLabel.textContent = "Start dictating";
     activeSession = undefined;
     activePipeline = undefined;
+    activeLiveMode = false;
   }
+}
+
+function updateLiveState(event) {
+  if (event.type === "live.chunk.started") {
+    elements.state.textContent = `Transcribing window ${event.sequence + 1}`;
+  }
+  if (event.type === "live.partial") {
+    finalText = event.chunk.transcript;
+    elements.output.textContent = finalText || "Listening…";
+    elements.output.classList.toggle("empty", !finalText);
+    elements.output.classList.add("streaming");
+    elements.rawOutput.textContent = finalText || "No raw transcript yet.";
+    elements.state.textContent = "Listening · live text updated";
+  }
+  if (event.type === "live.cleanup.started") elements.state.textContent = "Cleaning the full transcript";
 }
 
 function updatePipelineState(event) {
@@ -139,6 +189,7 @@ function updatePipelineState(event) {
 }
 
 function renderResult(result, recording) {
+  elements.output.classList.remove("streaming");
   finalText = result.text;
   elements.output.textContent = finalText || "No speech detected.";
   elements.output.classList.toggle("empty", !finalText);
@@ -151,10 +202,13 @@ function renderResult(result, recording) {
   for (const metric of document.querySelectorAll(".metric")) {
     const value = Number(timings[metric.dataset.key] || 0);
     metric.querySelector("b").textContent = formatMs(value);
-    metric.querySelector("i").style.width = `${Math.max(value ? 2 : 0, value / max * 100)}%`;
+    metric.querySelector("i").style.transform = `scaleX(${value ? Math.max(0.02, value / max) : 0})`;
   }
   elements.totalTime.textContent = `${formatMs(result.timings.totalMs)} pipeline`;
-  elements.runMeta.textContent = `${result.transcriptionModel} → ${result.cleanupModel || "raw transcript"} · ${formatBytes(recording.blob.size)} ${recording.mimeType}`;
+  const audioMeta = "blob" in recording
+    ? `${formatBytes(recording.blob.size)} ${recording.mimeType}`
+    : `${recording.windowCount} live window${recording.windowCount === 1 ? "" : "s"}`;
+  elements.runMeta.textContent = `${result.transcriptionModel} → ${result.cleanupModel || "raw transcript"} · ${audioMeta}`;
 }
 
 function updateTimer() {
@@ -168,6 +222,7 @@ function showError(error) {
   setNotice(humanizeError(message), true);
   elements.recordButton.disabled = false;
   elements.recordLabel.textContent = "Start dictating";
+  elements.output.classList.remove("streaming");
 }
 
 function humanizeError(message) {

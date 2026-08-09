@@ -27,10 +27,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build the current library
+        run: npm run build
+      - name: Assemble Pages artifact with local ESM library
+        run: |
+          mkdir -p /tmp/dictation-pages/library
+          cp -R docs/. /tmp/dictation-pages/
+          cp -R dist/. /tmp/dictation-pages/library/
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: docs
+          path: /tmp/dictation-pages
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5

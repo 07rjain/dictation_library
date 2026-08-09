@@ -8,6 +8,7 @@ All notable changes to this project will be documented here. This project follow
 
 - Near-live conversation sessions with ordered partial transcripts, prior-window prompt context, final guarded cleanup, and independently playable browser recording windows.
 - Deterministic live-session coverage plus a secret-backed GitHub Actions smoke test that replays `test.wav` through the live API.
+- An opt-in near-live mode in the GitHub Pages BYOK demo, built directly from the current library source during deployment.
 
 ### Fixed
 
