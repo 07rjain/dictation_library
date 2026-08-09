@@ -1,0 +1,40 @@
+name: Manual 10-minute Groq benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type RUN_LONG to approve approximately 11 Groq transcription requests"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: long-live-groq
+  cancel-in-progress: false
+
+jobs:
+  live-long:
+    if: github.repository == '07rjain/dictation_library' && inputs.confirm == 'RUN_LONG'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify live-test secret exists
+        run: test -n "$GROQ_API_KEY"
+      - name: Generate a 10-minute repeated spoken fixture
+        run: >-
+          ffmpeg -hide_banner -loglevel error -y -stream_loop -1 -i test.wav
+          -t 600 -ar 16000 -ac 1 -c:a flac /tmp/groq-dictation-10m.flac
+      - name: Run long-audio provider benchmark
+        run: npm run test:long:live -- /tmp/groq-dictation-10m.flac
