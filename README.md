@@ -1,10 +1,27 @@
 # Groq Dictation Kit
 
+[![npm version](https://img.shields.io/npm/v/groq-dictation-kit.svg)](https://www.npmjs.com/package/groq-dictation-kit)
+[![npm downloads](https://img.shields.io/npm/dm/groq-dictation-kit.svg)](https://www.npmjs.com/package/groq-dictation-kit)
+[![license](https://img.shields.io/npm/l/groq-dictation-kit.svg)](./LICENSE)
+
 A reusable TypeScript pipeline for fast browser dictation with Groq. It separates browser microphone capture from server-side transcription and cleanup so the same library can support multiple applications without shipping a shared Groq key to users.
 
 This is an independent open-source project and is not affiliated with or endorsed by Groq, Inc.
 
-**[Try the live BYOK demo](https://07rjain.github.io/dictation_library/)** — your key stays in the browser tab and requests go directly to Groq.
+## Try it online
+
+**[Open the live dictation website](https://07rjain.github.io/dictation_library/)**
+
+The website uses the published `groq-dictation-kit` package. Bring your own Groq API key, record in the browser, and inspect the cleaned transcript and per-stage latency measurements. The key is kept only in the current browser tab and requests are sent directly to Groq; the demo has no account system, database, analytics, or backend proxy.
+
+## Package
+
+- npm: [`groq-dictation-kit`](https://www.npmjs.com/package/groq-dictation-kit)
+- Live website: [`07rjain.github.io/dictation_library`](https://07rjain.github.io/dictation_library/)
+- Source and issues: [`07rjain/dictation_library`](https://github.com/07rjain/dictation_library)
+- Current release: [`v0.1.0`](https://github.com/07rjain/dictation_library/releases/tag/v0.1.0)
+- Runtime: ESM with bundled TypeScript declarations; Node.js 20 or newer
+- License: MIT
 
 ## Installation
 
