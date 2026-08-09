@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
+import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DictationPipeline } from "../dist/index.js";
 
@@ -109,14 +109,24 @@ server.listen(port, host, () => {
 });
 
 async function serveStatic(pathname, response) {
-  const route = pathname === "/" ? "/index.html" : pathname;
-  const base = route.startsWith("/library/") ? join(root, "dist") : join(root, "web");
-  const relative = route.startsWith("/library/") ? route.slice("/library/".length) : route.slice(1);
-  const safePath = normalize(relative).replace(/^(\.\.(\/|\\|$))+/, "");
-  const filePath = join(base, safePath);
+  const webRoutes = new Map([
+    ["/", "index.html"],
+    ["/index.html", "index.html"],
+    ["/app.js", "app.js"],
+    ["/styles.css", "styles.css"],
+  ]);
+  let filePath;
+  if (webRoutes.has(pathname)) {
+    filePath = join(root, "web", webRoutes.get(pathname));
+  } else if (/^\/library\/[a-z0-9-]+\.js(?:\.map)?$/i.test(pathname)) {
+    filePath = join(root, "dist", pathname.slice("/library/".length));
+  } else {
+    return json(response, 404, { error: "Not found." });
+  }
   try {
     const body = await readFile(filePath);
     response.writeHead(200, {
+      ...securityHeaders(),
       "Content-Type": contentTypeFor(filePath),
       "Cache-Control": "no-store",
     });
@@ -162,10 +172,22 @@ async function loadEnv(path) {
 
 function json(response, status, body) {
   response.writeHead(status, {
+    ...securityHeaders(),
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(body));
+}
+
+function securityHeaders() {
+  return {
+    "Content-Security-Policy": "default-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Permissions-Policy": "microphone=(self), camera=(), geolocation=()",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+  };
 }
 
 function normalizeFieldType(value) {

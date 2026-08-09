@@ -1,4 +1,4 @@
-import { DictationPipeline } from "@dictation-kit/core";
+import { DictationPipeline } from "groq-dictation-kit";
 
 const pipeline = new DictationPipeline({
   apiKey: process.env.GROQ_API_KEY!,

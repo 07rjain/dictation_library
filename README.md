@@ -1,6 +1,14 @@
-# Dictation Kit Core
+# Groq Dictation Kit
 
 A reusable TypeScript pipeline for fast browser dictation with Groq. It separates browser microphone capture from server-side transcription and cleanup so the same library can support multiple applications without shipping a shared Groq key to users.
+
+This is an independent open-source project and is not affiliated with or endorsed by Groq, Inc.
+
+## Installation
+
+```bash
+npm install groq-dictation-kit
+```
 
 ## Pipeline
 
@@ -39,7 +47,7 @@ Open `http://127.0.0.1:4173`. The interface measures browser recording duration,
 Keep `GROQ_API_KEY` on your server:
 
 ```ts
-import { DictationPipeline } from "@dictation-kit/core";
+import { DictationPipeline } from "groq-dictation-kit";
 
 const pipeline = new DictationPipeline({
   apiKey: process.env.GROQ_API_KEY!,
@@ -85,6 +93,8 @@ Browser microphone -> your HTTPS endpoint -> DictationPipeline -> Groq
 
 For a local-only BYOK prototype, users may enter their own key and opt into direct browser use with `dangerouslyAllowBrowser: true`. That mode is deliberately noisy because browser storage, extensions, logs, and bundled code can expose the key.
 
+The included benchmark server is a local development harness, not a production authentication layer. Before deploying it publicly, add user authentication, per-user rate limiting, request logging policies, abuse controls, and your own data-retention disclosure. Never commit `.env` files or expose a shared Groq key to frontend code.
+
 ## Accuracy mode
 
 Use `whisper-large-v3` instead of the Turbo model when accuracy matters more than the lowest latency:
@@ -107,3 +117,21 @@ GROQ_API_KEY=your_key npm run test:live -- /absolute/path/to/short-audio.webm
 ```
 
 The command prints transcription, cleanup, and total pipeline timings without printing the API key.
+
+## Public API
+
+- `DictationPipeline`: complete transcription and cleanup orchestration.
+- `DictationSession`: starts context collection before the recording finishes.
+- `GroqClient`: lower-level transcription and cleanup operations.
+- `BrowserRecorder`: microphone capture through the MediaRecorder API.
+- `DictationError`: typed errors with stable `code` and optional HTTP `status`.
+
+All exported TypeScript types are available from the package root.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development workflow and [SECURITY.md](./SECURITY.md) for responsible vulnerability reporting. Changes are tracked in [CHANGELOG.md](./CHANGELOG.md).
+
+## License
+
+MIT
