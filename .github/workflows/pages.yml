@@ -38,10 +38,15 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Build the current library
-        run: npm run build
-      - name: Assemble Pages artifact with local ESM library
-        run: node scripts/assemble-pages.mjs /tmp/dictation-pages "$GITHUB_SHA"
+      - name: Install the published package
+        shell: bash
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+          mkdir -p /tmp/dictation-package
+          npm install --prefix /tmp/dictation-package --ignore-scripts --no-audit --no-fund "groq-dictation-kit@$package_version"
+          echo "PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
+      - name: Assemble Pages artifact with the published ESM library
+        run: node scripts/assemble-pages.mjs /tmp/dictation-pages "$GITHUB_SHA" /tmp/dictation-package/node_modules/groq-dictation-kit/dist "$PACKAGE_VERSION"
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
