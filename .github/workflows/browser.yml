@@ -20,7 +20,7 @@ jobs:
             install: npx playwright install --with-deps chromium
             projects: --project=chromium --project=chromium-android
           - name: firefox-webkit-macos
-            runner: macos-14
+            runner: macos-15
             install: npx playwright install firefox webkit
             projects: --project=firefox --project=webkit-safari
     runs-on: ${{ matrix.runner }}

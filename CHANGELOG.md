@@ -37,7 +37,7 @@ All notable changes to this project will be documented here. This project follow
 - Long-job concurrency now recovers additively after sustained success, future HTTP-date `Retry-After` values have regression coverage, and live aborts emit `live.canceled`.
 - The live provider-boundary harness now expects direct raw URLs to succeed and redirecting share URLs to fail unless explicitly configured otherwise.
 - The live smoke fixture now explicitly enables dictation cleanup, matching the raw-by-default live-session API.
-- Browser CI now runs Chromium/Android on Linux and Firefox/desktop WebKit on macOS, where each Playwright engine exposes the required real `MediaRecorder` implementation; native iOS remains an explicit device test.
+- Browser CI now runs Chromium/Android on Linux and Firefox/desktop WebKit on supported macOS 15, where each Playwright engine exposes the required real `MediaRecorder` implementation; native iOS remains an explicit device test.
 - Cross-browser assertions tolerate normal codec startup/flush trimming while still requiring substantial independently decodable audio across a rotation boundary.
 - Explicitly enabled live cleanup now runs in bounded sections and emits `live.failed` when a cleanup request fails.
 - Recorder cancellation settles an in-flight stop, terminal errors are delivered only after preserved windows, and browsers that reject concurrent MediaRecorders fall back to sequential windows.
