@@ -58,5 +58,5 @@ The live command normalizes through FFmpeg, uses 60-second chunks with 2-second 
 - Cleanup guards preserve raw text, numbers, URLs, emails, and digit-bearing identifiers.
 - Large WAV and FFmpeg inputs are processed without a whole-Blob `arrayBuffer()` read.
 - Durable event cursors replay only events after the requested cursor.
-- Real browser windows decode independently in Chromium, Firefox, WebKit/iOS, and Chromium/Android.
+- Real browser windows decode independently in Chromium, Firefox, desktop Safari/WebKit, and Chromium/Android emulation; native iOS remains a device-testing responsibility.
 - Batch refuses to run in strict zero-data-retention mode.

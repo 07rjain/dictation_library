@@ -22,7 +22,7 @@ jobs:
           - name: firefox-webkit-macos
             runner: macos-14
             install: npx playwright install firefox webkit
-            projects: --project=firefox --project=webkit-ios
+            projects: --project=firefox --project=webkit-safari
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:

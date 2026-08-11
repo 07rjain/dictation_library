@@ -197,7 +197,7 @@ npm pack --dry-run
 
 `npm test` builds the TypeScript package and runs the deterministic suite without contacting Groq. It covers short and near-live transcription, bounded backpressure, conservative unspaced-script boundaries, recorder cancellation/error ordering, configuration precedence, retries/timeouts, codec-safe chunking, timestamp-proven stitching, cleanup guards and windows, long-job request identity/leases/provider outcomes/resume/abort, storage deletion, Batch lifecycle/recovery, adapter permissions, and FFmpeg normalization when FFmpeg is installed.
 
-`npm run test:browser` uses the real browser `MediaRecorder` and Web Audio decoder in Chromium, Firefox, WebKit/iOS emulation, and Chromium/Android emulation. A continuous synthetic audio source crosses a rotation boundary, and every emitted window must decode independently. GitHub Actions runs this matrix on every push and pull request.
+`npm run test:browser` uses the real browser `MediaRecorder` and Web Audio decoder in Chromium, Firefox, desktop Safari/WebKit, and Chromium/Android emulation. A continuous synthetic audio source crosses a rotation boundary, and every emitted window must decode independently. GitHub Actions runs Chromium on Linux and Firefox/WebKit on macOS for every push and pull request. Playwright does not run real iOS Safari; native iOS behavior still requires device testing.
 
 Use `npm run test:live` only when you intentionally want a real provider request. Live credentials are never required for the deterministic suite.
 
