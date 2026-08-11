@@ -10,7 +10,20 @@ permissions:
 
 jobs:
   cross-browser:
-    runs-on: ubuntu-latest
+    name: cross-browser (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: chromium-linux
+            runner: ubuntu-latest
+            install: npx playwright install --with-deps chromium
+            projects: --project=chromium --project=chromium-android
+          - name: firefox-webkit-macos
+            runner: macos-14
+            install: npx playwright install firefox webkit
+            projects: --project=firefox --project=webkit-ios
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -20,6 +33,6 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install browser runtimes
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: ${{ matrix.install }}
       - name: Exercise MediaRecorder rotation and decoding
-        run: npm run test:browser
+        run: npm run test:browser -- ${{ matrix.projects }}
