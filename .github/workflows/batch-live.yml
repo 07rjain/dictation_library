@@ -1,0 +1,36 @@
+name: Manual Groq audio Batch smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type RUN_BATCH to submit one billable audio Batch request"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: batch-live-groq
+  cancel-in-progress: false
+
+jobs:
+  live-batch:
+    if: github.repository == '07rjain/dictation_library' && inputs.confirm == 'RUN_BATCH'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_BATCH_AUDIO_URL: ${{ secrets.GROQ_BATCH_AUDIO_URL }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify live-test secrets exist
+        run: test -n "$GROQ_API_KEY" && test -n "$GROQ_BATCH_AUDIO_URL"
+      - name: Submit, poll, validate, and delete one audio Batch
+        run: npm run test:batch:live

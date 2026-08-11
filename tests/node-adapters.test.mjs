@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -37,6 +37,56 @@ test("FileJobStore persists manifests across instances", async () => {
   }
 });
 
+test("FileJobStore provides expiring cross-instance worker leases", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dictation-lease-test-"));
+  try {
+    const first = new FileJobStore(directory);
+    const second = new FileJobStore(directory);
+    assert.equal(await first.acquireLease("leased_job", "worker-a", 50), true);
+    assert.equal(await second.acquireLease("leased_job", "worker-b", 50), false);
+    assert.equal(await first.renewLease("leased_job", "worker-a", 100), true);
+    await first.releaseLease("leased_job", "worker-a");
+    assert.equal(await second.acquireLease("leased_job", "worker-b", 50), true);
+    await second.releaseLease("leased_job", "worker-b");
+
+    const contenders = Array.from({ length: 8 }, (_, index) =>
+      new FileJobStore(directory).acquireLease("contended_job", `worker-${index}`, 1_000)
+    );
+    const outcomes = await Promise.all(contenders);
+    assert.equal(outcomes.filter(Boolean).length, 1);
+    const winner = outcomes.findIndex(Boolean);
+    await new FileJobStore(directory).releaseLease("contended_job", `worker-${winner}`);
+
+    assert.equal(await first.acquireLease("expired_job", "worker-old", 5), true);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(await second.acquireLease("expired_job", "worker-new", 50), true);
+    await second.releaseLease("expired_job", "worker-new");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("FileJobStore stale-guard recovery cannot grant the same lease twice", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dictation-stale-guard-test-"));
+  try {
+    for (let round = 0; round < 30; round += 1) {
+      const jobId = `stale_${round}`;
+      await writeFile(join(directory, `${jobId}.lease.guard`), JSON.stringify({
+        token: `crashed-${round}`,
+        expiresAt: Date.now() - 1,
+      }));
+      const outcomes = await Promise.all(Array.from({ length: 16 }, (_, index) =>
+        new FileJobStore(directory).acquireLease(jobId, `worker-${index}`, 1_000)
+      ));
+      assert.equal(outcomes.filter(Boolean).length, 1, `round ${round} had multiple owners`);
+      const winner = outcomes.findIndex(Boolean);
+      await new FileJobStore(directory).releaseLease(jobId, `worker-${winner}`);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("FfmpegAudioProcessor normalizes to compact 16 kHz mono FLAC chunks", async (t) => {
   const processor = new FfmpegAudioProcessor({ output: "flac" });
   let chunks;
@@ -52,6 +102,28 @@ test("FfmpegAudioProcessor normalizes to compact 16 kHz mono FLAC chunks", async
   assert.equal(chunks.length, 3);
   assert.ok(chunks.every((chunk) => chunk.audio.data.type === "audio/flac"));
   assert.ok(chunks.every((chunk) => chunk.audio.data.size < wavAudio.data.size));
+});
+
+test("FfmpegAudioProcessor streams input instead of calling whole-Blob arrayBuffer", async (t) => {
+  class StreamOnlyBlob extends Blob {
+    async arrayBuffer() { throw new Error("whole blob buffering is forbidden"); }
+  }
+  const processor = new FfmpegAudioProcessor({ output: "flac" });
+  const streamOnly = {
+    data: new StreamOnlyBlob([wavBytes], { type: "audio/wav" }),
+    filename: "stream-only.wav",
+    durationMs: 2_450,
+  };
+  try {
+    const chunks = await processor.segment(streamOnly, { targetChunkMs: 10_000, overlapMs: 0 });
+    assert.equal(chunks.length, 1);
+  } catch (error) {
+    if (error?.code === "AUDIO_PROCESSING_FAILED" && /not installed/.test(error.message)) {
+      t.skip("FFmpeg is not installed");
+      return;
+    }
+    throw error;
+  }
 });
 
 test("a new pipeline instance resumes a durable partial job without replaying completed chunks", async () => {

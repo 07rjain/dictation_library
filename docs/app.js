@@ -32,6 +32,8 @@ let activeLiveMode = false;
 let timerId;
 let startedAt = 0;
 let finalText = "";
+let finalizing = false;
+let recorderError;
 
 elements.toggleKey.addEventListener("click", () => {
   const revealing = elements.apiKey.type === "password";
@@ -45,7 +47,7 @@ elements.apiKey.addEventListener("input", updateKeyReadiness);
 elements.liveMode.addEventListener("change", () => {
   if (recorder.isRecording) return;
   setNotice(elements.liveMode.checked
-    ? "Live partials will update about every 5 seconds. Short windows create more Groq requests."
+    ? "Live partials update about every 10 seconds, matching Groq's minimum billed duration."
     : "Single-upload mode sends audio only after you stop recording.");
 });
 document.addEventListener("keydown", (event) => {
@@ -62,8 +64,11 @@ elements.copyButton.addEventListener("click", async () => {
 });
 
 window.addEventListener("pagehide", () => {
+  // Leaving the page is an explicit privacy boundary: stop capture and abort provider work
+  // instead of keeping microphone/API activity alive in a hidden or closed tab.
   elements.apiKey.value = "";
   recorder.cancel();
+  activeSession?.abort?.(new Error("Page closed"));
 });
 
 const recordingSupported = Boolean(globalThis.navigator?.mediaDevices?.getUserMedia && globalThis.MediaRecorder);
@@ -74,7 +79,7 @@ if (!recordingSupported) {
 }
 
 async function toggleRecording() {
-  if (elements.recordButton.disabled) return;
+  if (elements.recordButton.disabled || finalizing) return;
   if (recorder.isRecording) return stopAndTranscribe();
   return startRecording();
 }
@@ -107,12 +112,15 @@ async function startRecording() {
         transcriptionModel: elements.model.value,
         language: elements.language.value || undefined,
         preserveExactWording: elements.exactWording.checked,
+        cleanup: elements.exactWording.checked ? { mode: "verbatim" } : { mode: "none" },
         context,
         onEvent: updateLiveState,
       });
       recorder = new BrowserLiveRecorder({
-        windowMs: 5_000,
+        windowMs: 10_000,
+        overlapMs: 500,
         onWindow: (audio) => activeSession.push(audio),
+        onError: handleRecorderError,
       });
     } else {
       activeSession = activePipeline.startSession(context);
@@ -131,24 +139,22 @@ async function startRecording() {
     if (activeLiveMode) {
       elements.output.textContent = "Listening for the first live window…";
       elements.output.classList.add("empty", "streaming");
-      setNotice("Keep speaking. Partial text will appear about every 5 seconds.");
+      setNotice("Keep speaking. Overlapping partial windows appear about every 10 seconds.");
     } else {
       setNotice("Speak naturally. You can correct yourself mid-sentence.");
     }
   } catch (error) {
     recorder.cancel();
+    activeSession?.abort?.(error);
     showError(error);
+    resetAfterRecording();
   }
 }
 
 async function stopAndTranscribe() {
-  window.clearInterval(timerId);
-  elements.recordButton.disabled = true;
-  elements.recordButton.classList.remove("recording");
-  elements.visualizer.classList.remove("active");
-  elements.recordLabel.textContent = "Processing…";
-  elements.stateText.textContent = "Preparing audio";
-  elements.recordButton.setAttribute("aria-busy", "true");
+  if (finalizing) return;
+  finalizing = true;
+  setFinalizingUi("Preparing audio");
 
   try {
     const recording = await recorder.stop();
@@ -166,14 +172,51 @@ async function stopAndTranscribe() {
     elements.stateText.textContent = "Complete";
     setNotice("Done. Your key remains only in this tab.");
   } catch (error) {
-    showError(error);
+    if (activeLiveMode && recorderError && error === recorderError) {
+      await preserveLiveResult(recorderError);
+    } else {
+      showError(error);
+    }
   } finally {
-    elements.recordButton.disabled = false;
-    elements.recordButton.setAttribute("aria-busy", "false");
-    elements.recordLabel.textContent = "Start dictating";
-    activeSession = undefined;
-    activePipeline = undefined;
-    activeLiveMode = false;
+    resetAfterRecording();
+  }
+}
+
+async function handleRecorderError(error) {
+  recorderError = error;
+  // stopAndTranscribe owns finalization when a failure races with a user-requested stop.
+  if (finalizing) return;
+  finalizing = true;
+  setFinalizingUi("Preserving partial transcript");
+  try {
+    await preserveLiveResult(error);
+  } finally {
+    resetAfterRecording();
+  }
+}
+
+async function preserveLiveResult(error) {
+  const session = activeSession;
+  if (!activeLiveMode || !session) {
+    showError(error);
+    return false;
+  }
+  try {
+    const result = await session.finish();
+    if (!result.chunks.length) {
+      showError(error);
+      return false;
+    }
+    renderResult(result, {
+      durationMs: Math.max(0, performance.now() - startedAt),
+      windowCount: result.chunks.length,
+    });
+    elements.stateText.textContent = "Partial result preserved";
+    setNotice(`${humanizeError(error instanceof Error ? error.message : "Recording stopped.")} The completed live windows were preserved.`, true);
+    return true;
+  } catch (finishError) {
+    showError(finishError);
+    return false;
   }
 }
 
@@ -231,6 +274,9 @@ function updateTimer() {
 }
 
 function showError(error) {
+  window.clearInterval(timerId);
+  elements.recordButton.classList.remove("recording");
+  elements.visualizer.classList.remove("active");
   const message = error instanceof Error ? error.message : "Dictation failed.";
   elements.stateText.textContent = "Needs attention";
   setNotice(humanizeError(message), true);
@@ -238,6 +284,33 @@ function showError(error) {
   elements.recordButton.setAttribute("aria-busy", "false");
   elements.recordLabel.textContent = "Start dictating";
   elements.output.classList.remove("streaming");
+}
+
+function setFinalizingUi(state) {
+  window.clearInterval(timerId);
+  elements.recordButton.disabled = true;
+  elements.recordButton.classList.remove("recording");
+  elements.visualizer.classList.remove("active");
+  elements.recordLabel.textContent = "Processing…";
+  elements.stateText.textContent = state;
+  elements.recordButton.setAttribute("aria-busy", "true");
+}
+
+function resetAfterRecording() {
+  window.clearInterval(timerId);
+  timerId = undefined;
+  startedAt = 0;
+  elements.timer.textContent = "00:00.0";
+  elements.recordButton.disabled = !recordingSupported;
+  elements.recordButton.setAttribute("aria-busy", "false");
+  elements.recordButton.classList.remove("recording");
+  elements.visualizer.classList.remove("active");
+  elements.recordLabel.textContent = "Start dictating";
+  activeSession = undefined;
+  activePipeline = undefined;
+  activeLiveMode = false;
+  recorderError = undefined;
+  finalizing = false;
 }
 
 function updateKeyReadiness() {

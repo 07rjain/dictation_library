@@ -18,9 +18,49 @@ export interface AudioInput {
   filename?: string;
   /** Known duration, when supplied by the recorder or upload metadata. */
   durationMs?: number;
+  /** Audio shared with the preceding independently playable live window. */
+  overlapBeforeMs?: number;
 }
 
 export type CleanupMode = "dictation" | "verbatim" | "none" | "summary";
+
+export interface CleanupStableSegment {
+  /** Caller-stable identifier used to report exactly which protected segment changed. */
+  id: string;
+  text: string;
+}
+
+export interface CleanupDiff {
+  /** Word tokens removed by cleanup, capped to keep telemetry bounded. */
+  removed: readonly string[];
+  /** Word tokens added by cleanup, capped to keep telemetry bounded. */
+  added: readonly string[];
+  truncated: boolean;
+}
+
+export interface CleanupGuardReport {
+  /** Deterministic identifier for this source/output guard decision. */
+  id: string;
+  mode: CleanupMode;
+  accepted: boolean;
+  reasons: readonly (
+    | "deletion-limit"
+    | "expansion-limit"
+    | "protected-terms-changed"
+    | "named-entities-changed"
+    | "stable-segments-changed"
+  )[];
+  sourceWordCount: number;
+  outputWordCount: number;
+  deletionRatio: number;
+  expansionRatio: number;
+  maximumDeletionRatio: number;
+  maximumExpansionRatio: number;
+  protectedTermsChanged: boolean;
+  namedEntitiesChanged: boolean;
+  changedStableSegmentIds: readonly string[];
+  diff: CleanupDiff;
+}
 
 export interface AudioMetadata {
   sizeBytes: number;
@@ -30,8 +70,10 @@ export interface AudioMetadata {
   sampleRate?: number;
   channels?: number;
   codec?: string;
-  /** SHA-256 over size plus bounded head/tail bytes, used to reject mismatched resumes. */
+  /** Inspection fingerprint. Long-job manifests store a `sha256:`-prefixed full-content identity here. */
   fingerprint?: string;
+  /** Legacy 0.3.x bounded fingerprint retained only for compatible manifest migration. */
+  legacyFingerprint?: string;
 }
 
 export interface DictationContext {
@@ -61,6 +103,30 @@ export interface TranscriptionConfig {
 export interface TranscriptionOptions extends TranscriptionConfig {
   model?: TranscriptionModel;
   signal?: AbortSignal;
+  /** Known duration for URL ingestion timeout adaptation. */
+  audioDurationMs?: number;
+  /** Low-level provider-attempt telemetry for durable orchestration and billing diagnostics. */
+  onProviderAttempt?: (event: ProviderAttemptEvent) => void;
+}
+
+export interface ProviderAttemptEvent {
+  attempt: number;
+  outcome: "started" | "succeeded" | "retrying" | "failed" | "unknown";
+  status?: number;
+  retryAfterMs?: number;
+  providerDirectedDelay?: boolean;
+  /** Provider quota snapshot parsed from response headers, when present. */
+  rateLimit?: RateLimitSnapshot;
+}
+
+export interface RateLimitSnapshot {
+  limitRequests?: number;
+  remainingRequests?: number;
+  resetRequestsMs?: number;
+  limitTokens?: number;
+  remainingTokens?: number;
+  resetTokensMs?: number;
+  observedAt: string;
 }
 
 export interface CleanupConfig {
@@ -87,6 +153,10 @@ export interface CleanupConfig {
   maxExpansionRatio?: number;
   /** Reject cleanup that changes numbers, URLs, email addresses, or digit-bearing identifiers. */
   preserveProtectedTerms?: boolean;
+  /** Reject cleanup that removes or invents likely proper names and acronyms. Defaults to true. */
+  preserveNamedEntities?: boolean;
+  /** Caller-supplied transcript spans that must remain present, identified in guard reports by ID. */
+  stableSegments?: readonly CleanupStableSegment[];
 }
 
 export interface CleanupOptions extends CleanupConfig {
@@ -141,6 +211,17 @@ export interface CleanupResult {
   model: string;
   usedFallback: boolean;
   rejected?: boolean;
+  guard?: CleanupGuardReport;
+}
+
+export interface CleanupWindowResult {
+  index: number;
+  startChar: number;
+  endChar: number;
+  model: string;
+  usedFallback: boolean;
+  accepted: boolean;
+  guard?: CleanupGuardReport;
 }
 
 export interface DictationResult {
@@ -154,6 +235,7 @@ export interface DictationResult {
   timings: PipelineTimings;
   /** True when unsafe cleanup output was rejected and raw text was returned. */
   cleanupRejected?: boolean;
+  cleanupGuard?: CleanupGuardReport;
 }
 
 export type PipelineEvent =
@@ -167,6 +249,7 @@ export type PipelineEvent =
 export interface RetryConfig {
   maxAttempts?: number;
   baseDelayMs?: number;
+  /** Maximum exponential-backoff wait when the provider omits Retry-After. Defaults to 5,000 ms. */
   maxDelayMs?: number;
 }
 
@@ -230,12 +313,33 @@ export interface StoredAudio {
   key: string;
   sizeBytes: number;
   contentType: string;
+  /** Immutable object version/ETag supplied by the storage provider. */
+  version?: string;
+  /** Full source checksum when the adapter can provide one. */
+  checksum?: string;
+  durationMs?: number;
+  /** Opaque provider token that can be reused to resume an interrupted multipart upload. */
+  resumeToken?: string;
+  /** Bytes already present before this invocation resumed the upload. */
+  resumedBytes?: number;
+}
+
+export interface StorageUploadOptions {
+  signal?: AbortSignal;
+  resumeToken?: string;
+  onProgress?: (event: { loadedBytes: number; totalBytes: number; resumedBytes: number }) => void;
+}
+
+export interface StorageDeleteOptions {
+  /** Delete this immutable object version when the provider supports versioned objects. */
+  version?: string;
+  signal?: AbortSignal;
 }
 
 export interface ObjectStorage {
-  put(key: string, audio: AudioInput): Promise<StoredAudio>;
+  put(key: string, audio: AudioInput, options?: StorageUploadOptions): Promise<StoredAudio>;
   createSignedUrl(key: string, expiresInSeconds: number): Promise<string>;
-  delete?(key: string): Promise<void>;
+  delete?(key: string, options?: StorageDeleteOptions): Promise<void>;
 }
 
 export interface StorageTranscriptionOptions extends TranscriptionOptions {
@@ -243,8 +347,36 @@ export interface StorageTranscriptionOptions extends TranscriptionOptions {
   signedUrlExpiresInSeconds?: number;
   /** Remove the temporary object after the provider request. Defaults to true. */
   deleteAfter?: boolean;
+  /** Opaque token previously returned by the storage adapter for resumable upload. */
+  uploadResumeToken?: string;
+  onStorageEvent?: (event: StorageEvent) => void;
 }
+
+export type StorageEvent =
+  | { type: "storage.upload.started"; key: string; totalBytes: number; resumeToken?: string }
+  | { type: "storage.upload.progress"; key: string; loadedBytes: number; totalBytes: number; resumedBytes: number }
+  | { type: "storage.upload.completed"; key: string; stored: StoredAudio }
+  | { type: "storage.transcription.started"; key: string }
+  | { type: "storage.transcription.completed"; key: string }
+  | { type: "storage.deletion.started"; key: string; version?: string }
+  | { type: "storage.deletion.completed"; key: string; version?: string }
+  | { type: "storage.deletion.failed"; key: string; version?: string; error: string };
 
 export interface StorageTranscriptionResult extends TranscriptionResult {
   storageKey: string;
+  storageVersion?: string;
+  deleted: boolean;
+  storageChecksum?: string;
+  uploadResumeToken?: string;
+}
+
+/** Structured recovery context attached to a STORAGE_DELETE_FAILED DictationError. */
+export interface StorageDeleteFailureDetails {
+  storageKey: string;
+  storageVersion?: string;
+  providerRequestFailed: boolean;
+  /** Successful transcription remains recoverable even though temporary-object cleanup failed. */
+  transcriptionResult?: TranscriptionResult;
+  /** Stable summary of the provider failure when transcription and deletion both failed. */
+  providerError?: { message: string; code?: string; status?: number };
 }

@@ -1,89 +1,82 @@
-import type { LongChunkResult } from "./types.js";
+import type { TranscriptionSegment } from "../types.js";
+import type { LongChunkResult, StitchDecision } from "./types.js";
 
 export function stitchChunks(chunks: readonly LongChunkResult[]): string {
+  return stitchChunksDetailed(chunks).text;
+}
+
+export function stitchChunksDetailed(
+  chunks: readonly LongChunkResult[],
+): { text: string; decisions: readonly StitchDecision[] } {
   const ordered = [...chunks].sort((left, right) => left.index - right.index);
-  let text = "";
-  for (const chunk of ordered) {
-    const timestampOwned = timestampOwnedText(chunk);
-    const candidate = timestampOwned || chunk.text.trim();
-    if (!candidate) continue;
-    text = text ? mergeOverlap(text, candidate, chunk.overlapBeforeMs > 0) : candidate;
-  }
-  return normalizeSpacing(text);
-}
+  const timestamped = ordered.map((chunk) => validSegments(chunk.segments));
+  const ownershipStarts = ordered.map(() => Number.NEGATIVE_INFINITY);
+  const ownershipEnds = ordered.map(() => Number.POSITIVE_INFINITY);
+  const boundaryProof = ordered.map(() => false);
+  const decisions: StitchDecision[] = [];
 
-function timestampOwnedText(chunk: LongChunkResult): string {
-  if (chunk.segments.length === 0) return "";
-  const ownershipBoundarySeconds = chunk.startMs / 1000 + chunk.overlapBeforeMs / 2000;
-  return chunk.segments
-    .filter((segment) => {
-      if (chunk.index === 0) return true;
-      const start = segment.start ?? 0;
-      const end = segment.end ?? start;
-      return (start + end) / 2 >= ownershipBoundarySeconds;
-    })
-    .map((segment) => segment.text?.trim() ?? "")
-    .filter(Boolean)
-    .join(" ");
-}
-
-function mergeOverlap(previous: string, current: string, hasTemporalOverlap: boolean): string {
-  if (!hasTemporalOverlap) return `${previous} ${current}`;
-  const left = tokenize(previous);
-  const right = tokenize(current);
-  const maximum = Math.min(80, left.length, right.length);
-  let overlap = 0;
-  for (let count = 1; count <= maximum; count += 1) {
-    const suffix = left.slice(-count).map(normalizeToken);
-    const prefix = right.slice(0, count).map(normalizeToken);
-    if (suffix.every((token, index) => token === prefix[index])) {
-      overlap = count;
+  for (let index = 1; index < ordered.length; index += 1) {
+    const previous = ordered[index - 1]!;
+    const current = ordered[index]!;
+    if (current.overlapBeforeMs <= 0) continue;
+    const proven = timestamped[index - 1] !== undefined && timestamped[index] !== undefined;
+    boundaryProof[index] = proven;
+    if (!proven) {
+      decisions.push({
+        boundaryIndex: current.index,
+        confidence: "low",
+        method: "preserved-uncertain",
+        deduplicatedSegments: 0,
+        alternatives: [boundaryTail(previous.text), boundaryHead(current.text)],
+      });
       continue;
     }
-    if (count >= 3 && fuzzySequenceSimilarity(suffix, prefix) >= 0.82) overlap = count;
+    const boundarySeconds = current.startMs / 1_000 + current.overlapBeforeMs / 2_000;
+    ownershipEnds[index - 1] = Math.min(ownershipEnds[index - 1]!, boundarySeconds);
+    ownershipStarts[index] = Math.max(ownershipStarts[index]!, boundarySeconds);
+    const removedFromPrevious = timestamped[index - 1]!.filter((segment) => midpoint(segment) >= boundarySeconds).length;
+    const removedFromCurrent = timestamped[index]!.filter((segment) => midpoint(segment) < boundarySeconds).length;
+    decisions.push({
+      boundaryIndex: current.index,
+      confidence: "high",
+      method: "timestamp-ownership",
+      deduplicatedSegments: removedFromPrevious + removedFromCurrent,
+    });
   }
-  return `${previous} ${right.slice(overlap).join(" ")}`;
+
+  const text = ordered.map((chunk, index) => {
+    const segments = timestamped[index];
+    const usesOwnership = boundaryProof[index] || boundaryProof[index + 1];
+    if (!usesOwnership || segments === undefined) return chunk.text.trim();
+    // An empty owned region is meaningful: never restore the unfiltered overlapping chunk text.
+    return segments.filter((segment) => {
+      const center = midpoint(segment);
+      return center >= ownershipStarts[index]! && center < ownershipEnds[index]!;
+    }).map((segment) => segment.text?.trim() ?? "").filter(Boolean).join(" ");
+  }).filter(Boolean).join(" ");
+
+  return { text: normalizeSpacing(text), decisions };
 }
 
-function tokenize(text: string): string[] {
-  return text.trim().split(/\s+/).filter(Boolean);
+function validSegments(
+  segments: readonly TranscriptionSegment[],
+): readonly (TranscriptionSegment & { start: number; end: number })[] | undefined {
+  if (segments.length === 0 || segments.some((segment) =>
+    !Number.isFinite(segment.start) || !Number.isFinite(segment.end) || segment.end! < segment.start!
+  )) return undefined;
+  return segments as readonly (TranscriptionSegment & { start: number; end: number })[];
 }
 
-function normalizeToken(token: string): string {
-  return token.toLocaleLowerCase().replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "");
+function midpoint(segment: { start: number; end: number }): number {
+  return (segment.start + segment.end) / 2;
 }
 
-function fuzzySequenceSimilarity(left: readonly string[], right: readonly string[]): number {
-  if (left.length === 0 && right.length === 0) return 1;
-  const rows = left.length + 1;
-  const columns = right.length + 1;
-  const matrix = Array.from({ length: rows }, () => new Uint16Array(columns));
-  for (let row = 1; row < rows; row += 1) {
-    for (let column = 1; column < columns; column += 1) {
-      matrix[row]![column] = tokensSimilar(left[row - 1]!, right[column - 1]!)
-        ? matrix[row - 1]![column - 1]! + 1
-        : Math.max(matrix[row - 1]![column]!, matrix[row]![column - 1]!);
-    }
-  }
-  return matrix[left.length]![right.length]! / Math.max(left.length, right.length);
+function boundaryTail(text: string): string {
+  return text.trim().split(/\s+/).slice(-24).join(" ");
 }
 
-function tokensSimilar(left: string, right: string): boolean {
-  if (left === right) return true;
-  if (Math.abs(left.length - right.length) > 1 || Math.min(left.length, right.length) < 5) return false;
-  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
-    const current = [leftIndex];
-    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
-      current[rightIndex] = Math.min(
-        current[rightIndex - 1]! + 1,
-        previous[rightIndex]! + 1,
-        previous[rightIndex - 1]! + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
-      );
-    }
-    previous = current;
-  }
-  return previous[right.length]! <= 1;
+function boundaryHead(text: string): string {
+  return text.trim().split(/\s+/).slice(0, 24).join(" ");
 }
 
 function normalizeSpacing(text: string): string {

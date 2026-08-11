@@ -4,9 +4,11 @@ import { LongJob } from "./long/job.js";
 import { MemoryJobStore } from "./long/store.js";
 import { routeAudio } from "./router.js";
 import { LiveConversationSession } from "./live-session.js";
+import { DictationError } from "./errors.js";
 import type { LiveConversationOptions } from "./live-session.js";
 import type {
   AudioInput,
+  AudioMetadata,
   CleanupOptions,
   DictationClientOptions,
   DictationContext,
@@ -17,6 +19,8 @@ import type {
   ObjectStorage,
   StorageTranscriptionOptions,
   StorageTranscriptionResult,
+  StorageEvent,
+  CleanupGuardReport,
   TranscriptionOptions,
 } from "./types.js";
 import type {
@@ -82,16 +86,84 @@ export class DictationPipeline {
     storage: ObjectStorage,
     options: StorageTranscriptionOptions = {},
   ): Promise<StorageTranscriptionResult> {
-    const { key, signedUrlExpiresInSeconds, deleteAfter, ...transcription } = options;
+    const { key, signedUrlExpiresInSeconds, deleteAfter, uploadResumeToken, onStorageEvent, ...transcription } = options;
     const storageKey = key ?? `dictation/${createStorageId()}/${safeStorageFilename(audio.filename)}`;
-    const stored = await storage.put(storageKey, audio);
+    emitStorage(onStorageEvent, {
+      type: "storage.upload.started",
+      key: storageKey,
+      totalBytes: audio.data.size,
+      ...(uploadResumeToken ? { resumeToken: uploadResumeToken } : {}),
+    });
+    const stored = await storage.put(storageKey, audio, {
+      ...(transcription.signal ? { signal: transcription.signal } : {}),
+      ...(uploadResumeToken ? { resumeToken: uploadResumeToken } : {}),
+      onProgress: (progress) => emitStorage(onStorageEvent, {
+        type: "storage.upload.progress",
+        key: storageKey,
+        ...progress,
+      }),
+    });
+    emitStorage(onStorageEvent, { type: "storage.upload.completed", key: stored.key, stored });
+    let result: Awaited<ReturnType<GroqClient["transcribeUrl"]>> | undefined;
+    let primaryError: unknown;
     try {
       const url = await storage.createSignedUrl(stored.key, signedUrlExpiresInSeconds ?? 900);
-      const result = await this.groq.transcribeUrl(url, transcription);
-      return { ...result, storageKey: stored.key };
-    } finally {
-      if (deleteAfter !== false) await storage.delete?.(stored.key);
+      emitStorage(onStorageEvent, { type: "storage.transcription.started", key: stored.key });
+      result = await this.groq.transcribeUrl(url, {
+        ...transcription,
+        ...(stored.durationMs !== undefined ? { audioDurationMs: stored.durationMs } : {}),
+      });
+      emitStorage(onStorageEvent, { type: "storage.transcription.completed", key: stored.key });
+    } catch (error) {
+      primaryError = error;
     }
+    let deleted = false;
+    if (deleteAfter !== false && storage.delete) {
+      try {
+        emitStorage(onStorageEvent, {
+          type: "storage.deletion.started",
+          key: stored.key,
+          ...(stored.version ? { version: stored.version } : {}),
+        });
+        await storage.delete(stored.key, {
+          ...(stored.version ? { version: stored.version } : {}),
+          ...(transcription.signal ? { signal: transcription.signal } : {}),
+        });
+        deleted = true;
+        emitStorage(onStorageEvent, {
+          type: "storage.deletion.completed",
+          key: stored.key,
+          ...(stored.version ? { version: stored.version } : {}),
+        });
+      } catch (cause) {
+        emitStorage(onStorageEvent, {
+          type: "storage.deletion.failed",
+          key: stored.key,
+          ...(stored.version ? { version: stored.version } : {}),
+          error: cause instanceof Error ? cause.message : String(cause),
+        });
+        throw new DictationError("Temporary object-storage audio could not be deleted.", {
+          code: "STORAGE_DELETE_FAILED",
+          details: {
+            storageKey: stored.key,
+            storageVersion: stored.version,
+            providerRequestFailed: primaryError !== undefined,
+            ...(result ? { transcriptionResult: result } : {}),
+            ...(primaryError !== undefined ? { providerError: summarizeError(primaryError) } : {}),
+          },
+          cause,
+        });
+      }
+    }
+    if (primaryError !== undefined) throw primaryError;
+    return {
+      ...result!,
+      storageKey: stored.key,
+      ...(stored.version ? { storageVersion: stored.version } : {}),
+      ...(stored.checksum ? { storageChecksum: stored.checksum } : {}),
+      ...(stored.resumeToken ? { uploadResumeToken: stored.resumeToken } : {}),
+      deleted,
+    };
   }
 
   async cleanup(transcript: string, options: CleanupOptions = {}) {
@@ -105,7 +177,7 @@ export class DictationPipeline {
 
   /** Create a resumable, observable job for long audio. Existing dictate() behavior is unchanged. */
   createJob(audio: AudioInput, options: LongDictationOptions = {}): LongDictationJob {
-    return new LongJob(this.groq, audio, options, this.longJobStore);
+    return this.createLongJob(audio, options);
   }
 
   /** Convenience API for long audio. Defaults to chunked transcription with raw output. */
@@ -113,23 +185,35 @@ export class DictationPipeline {
     return this.createJob(audio, options).result();
   }
 
-  /** Automatically retain the fast direct path or select codec-aware chunking by size. */
+  /** Automatically retain the fast direct path or select a supported long-audio processor. */
   async dictateAuto(
     audio: AudioInput,
     options: AutoDictationOptions = {},
   ): Promise<DictationResult | LongDictationResult> {
+    // Custom processors may discover duration/codec information that generic Blob inspection
+    // cannot (notably FFprobe-backed WebM/MP4 inputs), so their metadata is authoritative.
+    const sourceMetadata = options.processor ? await options.processor.inspect(audio) : undefined;
     const decision = await routeAudio(audio, {
       ...(options.forceLong !== undefined ? { forceLong: options.forceLong } : {}),
+      ...(sourceMetadata ? { sourceMetadata } : {}),
     });
     if (decision.kind === "direct") {
       return this.dictate(audio, toShortOptions(options));
     }
-    return this.dictateLong(audio, options);
+    return this.createLongJob(audio, options, decision.metadata).result();
   }
 
   /** Resume an interrupted job and reuse all successfully persisted chunks. */
   resumeJob(jobId: string, audio: AudioInput, options: LongDictationOptions = {}): LongDictationJob {
     return this.createJob(audio, { ...options, jobId });
+  }
+
+  private createLongJob(
+    audio: AudioInput,
+    options: LongDictationOptions,
+    sourceMetadata?: AudioMetadata,
+  ): LongDictationJob {
+    return new LongJob(this.groq, audio, options, this.longJobStore, sourceMetadata);
   }
 
   async runSession(
@@ -163,6 +247,7 @@ export class DictationPipeline {
     let cleanupModel: string | undefined;
     let usedCleanupFallback = false;
     let cleanupRejected = false;
+    let cleanupGuard: CleanupGuardReport | undefined;
     let cleanupMs = 0;
 
     if (text) {
@@ -184,6 +269,7 @@ export class DictationPipeline {
       cleanupModel = cleaned.model;
       usedCleanupFallback = cleaned.usedFallback;
       cleanupRejected = Boolean(cleaned.rejected);
+      cleanupGuard = cleaned.guard;
       this.emit({
         type: "cleanup.completed",
         durationMs: cleanupMs,
@@ -207,6 +293,7 @@ export class DictationPipeline {
         totalMs: performance.now() - totalStartedAt,
       },
       cleanupRejected,
+      ...(cleanupGuard ? { cleanupGuard } : {}),
     };
     this.emit({ type: "pipeline.completed", result });
     return result;
@@ -215,6 +302,24 @@ export class DictationPipeline {
   private emit(event: PipelineEvent): void {
     this.onEvent?.(event);
   }
+}
+
+function emitStorage(listener: ((event: StorageEvent) => void) | undefined, event: StorageEvent): void {
+  try {
+    listener?.(event);
+  } catch {
+    // Storage observability must not alter the upload/transcription lifecycle.
+  }
+}
+
+function summarizeError(error: unknown): { message: string; code?: string; status?: number } {
+  if (!(error instanceof Error)) return { message: String(error) };
+  const candidate = error as Error & { code?: unknown; status?: unknown };
+  return {
+    message: error.message,
+    ...(typeof candidate.code === "string" ? { code: candidate.code } : {}),
+    ...(typeof candidate.status === "number" ? { status: candidate.status } : {}),
+  };
 }
 
 async function resolveContext(

@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "src/**"
+      - "scripts/assemble-pages.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 

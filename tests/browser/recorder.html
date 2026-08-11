@@ -1,0 +1,66 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BrowserLiveRecorder integration fixture</title>
+<output id="status">ready</output>
+<script type="module">
+  import { BrowserLiveRecorder } from "/dist/index.js";
+
+  globalThis.runRecorderIntegration = async () => {
+    if (typeof MediaRecorder === "undefined") {
+      throw new Error("MediaRecorder is unavailable");
+    }
+    const context = new AudioContext();
+    const destination = context.createMediaStreamDestination();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.frequency.value = 440;
+    gain.gain.value = 0.2;
+    oscillator.connect(gain).connect(destination);
+    oscillator.start();
+    await context.resume();
+
+    const originalMediaDevices = navigator.mediaDevices;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: async () => destination.stream },
+    });
+    const windows = [];
+    try {
+      const recorder = new BrowserLiveRecorder({
+        windowMs: 1_000,
+        overlapMs: 150,
+        onWindow(audio, sequence) {
+          windows.push({ blob: audio.data, sequence, durationMs: audio.durationMs });
+        },
+      });
+      await recorder.start();
+      await new Promise((resolve) => setTimeout(resolve, 2_250));
+      const summary = await recorder.stop();
+      const decoded = [];
+      for (const window of windows) {
+        const bytes = await window.blob.arrayBuffer();
+        const decoder = new AudioContext();
+        try {
+          const audio = await decoder.decodeAudioData(bytes.slice(0));
+          decoded.push({
+            sequence: window.sequence,
+            bytes: bytes.byteLength,
+            duration: audio.duration,
+            channels: audio.numberOfChannels,
+          });
+        } finally {
+          await decoder.close();
+        }
+      }
+      return { summary, decoded };
+    } finally {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: originalMediaDevices,
+      });
+      oscillator.stop();
+      destination.stream.getTracks().forEach((track) => track.stop());
+      await context.close();
+    }
+  };
+</script>

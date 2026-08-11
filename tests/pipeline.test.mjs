@@ -202,6 +202,56 @@ test("retries retryable transcription failures without replaying cleanup", async
   assert.equal(calls, 2);
 });
 
+test("honors provider Retry-After beyond the exponential backoff cap", async () => {
+  for (const retryAfter of ["0.04", new Date(0).toUTCString()]) {
+    let calls = 0;
+    const client = new GroqClient({
+      apiKey: "test",
+      retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 5 },
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response("rate limited", {
+            status: 429,
+            headers: { "Retry-After": retryAfter },
+          });
+        }
+        return Response.json({ text: "Recovered", segments: [] });
+      },
+    });
+    const startedAt = performance.now();
+    const result = await client.transcribe(audio);
+    const elapsedMs = performance.now() - startedAt;
+    assert.equal(result.text, "Recovered");
+    assert.equal(calls, 2);
+    if (retryAfter === "0.04") {
+      assert.ok(elapsedMs >= 30, `expected provider Retry-After to exceed maxDelayMs, got ${elapsedMs}ms`);
+    } else {
+      assert.ok(elapsedMs < 500, `expected a past HTTP-date to retry immediately, got ${elapsedMs}ms`);
+    }
+  }
+});
+
+test("honors a future HTTP-date Retry-After value", async () => {
+  let calls = 0;
+  const retryAfter = new Date(Date.now() + 1_500).toUTCString();
+  const client = new GroqClient({
+    apiKey: "test",
+    retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 5 },
+    fetch: async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("rate limited", { status: 429, headers: { "Retry-After": retryAfter } })
+        : Response.json({ text: "Recovered", segments: [] });
+    },
+  });
+  const startedAt = performance.now();
+  await client.transcribe(audio);
+  const elapsedMs = performance.now() - startedAt;
+  assert.equal(calls, 2);
+  assert.ok(elapsedMs >= 250, `expected a future HTTP-date delay, got ${elapsedMs}ms`);
+});
+
 test("adaptive timeout produces a stable REQUEST_TIMEOUT error", async () => {
   const client = new GroqClient({
     apiKey: "test",

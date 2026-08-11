@@ -39,6 +39,9 @@ const pipeline = new DictationPipeline({
 if (audioPath) {
   const session = pipeline.startLiveConversation({
     language: "en",
+    // Live sessions intentionally return raw text by default. This fixture asserts cleanup,
+    // so opt into the dictation cleanup mode explicitly.
+    cleanup: { mode: "dictation" },
     context: { appName: "Live smoke test", fieldType: "document" },
   });
   const partial = await session.push(audio);

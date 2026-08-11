@@ -2,6 +2,7 @@ import type {
   AudioInput,
   AudioMetadata,
   CleanupConfig,
+  CleanupWindowResult,
   DictationContext,
   DictationOptions,
   PipelineTimings,
@@ -25,12 +26,16 @@ export interface AudioSegmentationOptions {
   targetChunkMs: number;
   overlapMs: number;
   maxChunkBytes?: number;
+  /** Reuse metadata already inspected by the job/router. */
+  metadata?: AudioMetadata;
   signal?: AbortSignal;
 }
 
 export interface AudioProcessor {
   readonly name: string;
   inspect(audio: AudioInput): Promise<AudioMetadata>;
+  /** Return false when this processor cannot safely segment the supplied container or codec. */
+  supports?(audio: AudioInput, metadata: AudioMetadata): boolean | Promise<boolean>;
   segment(audio: AudioInput, options: AudioSegmentationOptions): Promise<readonly AudioChunk[]>;
 }
 
@@ -39,8 +44,14 @@ export interface LongChunkRecord {
   startMs: number;
   endMs: number;
   overlapBeforeMs: number;
+  /** Content-addressed identity of source, preprocessing, time range, and transcription options. */
+  requestKey?: string;
   status: LongChunkStatus;
+  /** Logical job executions of this chunk, distinct from provider HTTP attempts. */
   attempts: number;
+  providerAttempts?: number;
+  /** Timeouts/network failures whose provider billing/completion outcome is unknowable locally. */
+  unknownProviderOutcomes?: number;
   result?: TranscriptionResult;
   alternatives?: TranscriptionResult[];
   error?: { code: string; message: string; status?: number };
@@ -56,10 +67,16 @@ export interface LongJobManifest {
   mode: LongJobMode;
   source: AudioMetadata;
   processor: string;
+  /** Content-addressed identity of preprocessing and transcription configuration. */
+  configurationKey?: string;
   targetChunkMs: number;
   overlapMs: number;
   concurrency: number;
   chunks: LongChunkRecord[];
+  /** Last allocated durable event cursor. */
+  eventCursor?: number;
+  /** Durable append-only lifecycle history. Stores contain this with the manifest. */
+  events?: LongJobEvent[];
   result?: LongDictationResult;
 }
 
@@ -67,6 +84,10 @@ export interface JobStore {
   load(jobId: string): Promise<LongJobManifest | undefined>;
   save(manifest: LongJobManifest): Promise<void>;
   delete?(jobId: string): Promise<void>;
+  /** Optional distributed lease primitive. Return false when another worker owns the job. */
+  acquireLease?(jobId: string, owner: string, ttlMs: number): Promise<boolean>;
+  renewLease?(jobId: string, owner: string, ttlMs: number): Promise<boolean>;
+  releaseLease?(jobId: string, owner: string): Promise<void>;
 }
 
 export interface LongDictationOptions extends Omit<DictationOptions, "cleanup"> {
@@ -88,6 +109,10 @@ export interface LongDictationOptions extends Omit<DictationOptions, "cleanup"> 
   accuracyMode?: "independent" | "retry-ambiguous" | "sequential";
   ambiguityLogProbabilityThreshold?: number;
   promptTailChars?: number;
+  /** Distributed store lease duration. Defaults to 30 seconds when the store implements leases. */
+  leaseTtlMs?: number;
+  /** Explicitly accept and upgrade pre-content-identity manifests. Defaults to false. */
+  migrateLegacyManifest?: boolean;
 }
 
 export interface AutoDictationOptions extends LongDictationOptions {
@@ -117,26 +142,47 @@ export interface LongDictationResult {
   context: DictationContext;
   timings: PipelineTimings;
   chunks: readonly LongChunkResult[];
+  stitching: readonly StitchDecision[];
+  cleanupWindows: readonly CleanupWindowResult[];
   source: AudioMetadata;
 }
 
-export type LongJobEvent =
+export interface StitchDecision {
+  boundaryIndex: number;
+  confidence: "high" | "low";
+  method: "timestamp-ownership" | "preserved-uncertain";
+  deduplicatedSegments: number;
+  /** Both boundary readings are retained for audit when ownership cannot be proven. */
+  alternatives?: readonly [string, string];
+}
+
+export type LongJobEventPayload =
   | { type: "job.started"; jobId: string; chunkCount: number }
   | { type: "job.resumed"; jobId: string; completedChunks: number }
   | { type: "chunk.started"; jobId: string; index: number; attempt: number }
   | { type: "chunk.completed"; jobId: string; index: number; durationMs: number; text: string }
   | { type: "chunk.failed"; jobId: string; index: number; error: string }
   | { type: "chunk.retrying"; jobId: string; index: number; reason: string }
+  | { type: "concurrency.reduced"; jobId: string; from: number; to: number; reason: string }
+  | { type: "concurrency.increased"; jobId: string; from: number; to: number; reason: string }
   | { type: "job.progress"; jobId: string; completed: number; failed: number; total: number }
+  | { type: "job.partial"; jobId: string; completed: number; failed: number; partialTranscript: string }
+  | { type: "job.canceled"; jobId: string; reason: string }
   | { type: "stitching.started"; jobId: string }
+  | { type: "stitching.decision"; jobId: string; decision: StitchDecision }
   | { type: "cleanup.started"; jobId: string }
+  | { type: "cleanup.window"; jobId: string; window: CleanupWindowResult }
+  | { type: "rate-limit.observed"; jobId: string; remainingRequests?: number; resetRequestsMs?: number }
   | { type: "job.completed"; jobId: string; result: LongDictationResult }
   | { type: "job.failed"; jobId: string; error: string };
+
+export type LongJobEvent = LongJobEventPayload & { cursor: number; at: string };
 
 export interface LongDictationJob {
   readonly id: string;
   result(): Promise<LongDictationResult>;
-  events(): AsyncIterable<LongJobEvent>;
+  /** Replay durable events strictly after `afterCursor`, then continue with live events. */
+  events(afterCursor?: number): AsyncIterable<LongJobEvent>;
   inspect(): Promise<LongJobManifest>;
   abort(reason?: unknown): void;
 }

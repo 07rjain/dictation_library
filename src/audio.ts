@@ -1,10 +1,11 @@
 import { DictationError } from "./errors.js";
 import type { AudioInput, AudioMetadata } from "./types.js";
+import { IncrementalSha256 } from "./sha256.js";
 
 export async function inspectAudio(audio: AudioInput): Promise<AudioMetadata> {
   const filename = audio.filename ?? filenameForMime(audio.data.type);
   const mimeType = audio.data.type || mimeForFilename(filename);
-  const fingerprint = await audioFingerprint(audio.data);
+  const fingerprint = await legacyAudioFingerprint(audio.data);
   const base: AudioMetadata = {
     sizeBytes: audio.data.size,
     mimeType,
@@ -23,7 +24,8 @@ export async function inspectAudio(audio: AudioInput): Promise<AudioMetadata> {
   }
 }
 
-async function audioFingerprint(blob: Blob): Promise<string | undefined> {
+/** Legacy bounded identity used by inspectAudio and 0.3.x manifest migration. */
+export async function legacyAudioFingerprint(blob: Blob): Promise<string | undefined> {
   if (!globalThis.crypto?.subtle) return undefined;
   const sampleSize = 65_536;
   const head = new Uint8Array(await blob.slice(0, sampleSize).arrayBuffer());
@@ -33,8 +35,25 @@ async function audioFingerprint(blob: Blob): Promise<string | undefined> {
   new DataView(payload.buffer).setBigUint64(0, BigInt(blob.size), true);
   payload.set(head, 8);
   payload.set(tail, 8 + head.length);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", payload));
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", payload));
   return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Full content identity for durable long-job resume checks. Kept off the short dictation path. */
+export async function fullAudioFingerprint(blob: Blob): Promise<string | undefined> {
+  if (!globalThis.crypto?.subtle) return undefined;
+  // Web Crypto is substantially faster for ordinary files. The incremental path keeps
+  // large recordings bounded without penalizing the latency-sensitive short path.
+  if (blob.size <= 4 * 1024 * 1024) {
+    const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", await blob.arrayBuffer()));
+    return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  }
+  const digest = new IncrementalSha256();
+  const chunkBytes = 4 * 1024 * 1024;
+  for (let offset = 0; offset < blob.size; offset += chunkBytes) {
+    digest.update(new Uint8Array(await blob.slice(offset, offset + chunkBytes).arrayBuffer()));
+  }
+  return `sha256:${digest.digestHex()}`;
 }
 
 export function assertDirectUploadSize(metadata: AudioMetadata, maximumBytes: number): void {

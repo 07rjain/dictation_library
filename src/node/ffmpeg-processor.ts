@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { promisify } from "node:util";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { inspectAudio } from "../audio.js";
 import { DictationError } from "../errors.js";
 import type { AudioInput, AudioMetadata } from "../types.js";
@@ -34,6 +37,10 @@ export class FfmpegAudioProcessor implements AudioProcessor {
     this.temporaryRoot = options.temporaryRoot ?? tmpdir();
     this.commandTimeoutMs = options.commandTimeoutMs ?? 10 * 60_000;
     this.output = options.output ?? "flac";
+  }
+
+  supports(): boolean {
+    return true;
   }
 
   async inspect(audio: AudioInput): Promise<AudioMetadata> {
@@ -69,7 +76,7 @@ export class FfmpegAudioProcessor implements AudioProcessor {
   }
 
   async segment(audio: AudioInput, options: AudioSegmentationOptions): Promise<readonly AudioChunk[]> {
-    const metadata = await this.inspect(audio);
+    const metadata = options.metadata ?? await this.inspect(audio);
     if (metadata.durationMs === undefined) {
       throw new DictationError("Audio duration could not be determined.", { code: "INVALID_AUDIO" });
     }
@@ -129,7 +136,10 @@ export class FfmpegAudioProcessor implements AudioProcessor {
     const directory = await mkdtemp(join(this.temporaryRoot, "groq-dictation-"));
     const extension = safeExtension(audio.filename);
     const path = join(directory, `input${extension}`);
-    await writeFile(path, new Uint8Array(await audio.data.arrayBuffer()));
+    await pipeline(
+      Readable.fromWeb(audio.data.stream() as import("node:stream/web").ReadableStream),
+      createWriteStream(path, { mode: 0o600 }),
+    );
     try {
       return await action(path, directory);
     } finally {

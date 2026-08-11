@@ -1,0 +1,25 @@
+name: Browser recorder
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install browser runtimes
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Exercise MediaRecorder rotation and decoding
+        run: npm run test:browser

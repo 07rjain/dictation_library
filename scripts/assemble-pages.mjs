@@ -14,14 +14,21 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const output = resolve(outputArgument);
 const revision = revisionArgument;
 const versionedLibrary = resolve(output, "library", revision);
+const docsRoot = resolve(root, "docs");
+const sourceAppPath = resolve(docsRoot, "app.js");
 
 await mkdir(versionedLibrary, { recursive: true });
-await cp(resolve(root, "docs"), output, { recursive: true });
+await cp(docsRoot, output, {
+  recursive: true,
+  // Only the immutable app-{revision}.js entry point is deployed. Keeping app.js beside it can
+  // make stale assets look executable during cache and deployment diagnostics.
+  filter: (source) => source !== sourceAppPath,
+});
 // Keep the stable path for cached older HTML while new HTML uses the immutable revision path.
 await cp(resolve(root, "dist"), resolve(output, "library"), { recursive: true });
 await cp(resolve(root, "dist"), versionedLibrary, { recursive: true });
 
-const sourceApp = await readFile(resolve(root, "docs", "app.js"), "utf8");
+const sourceApp = await readFile(sourceAppPath, "utf8");
 const versionedAppName = `app-${revision}.js`;
 const versionedApp = sourceApp.replace(
   'from "./library/index.js"',
@@ -31,8 +38,15 @@ if (versionedApp === sourceApp) throw new Error("Could not version the Pages lib
 await writeFile(resolve(output, versionedAppName), versionedApp);
 
 const sourceHtml = await readFile(resolve(root, "docs", "index.html"), "utf8");
-const versionedHtml = sourceHtml.replace('src="./app.js"', `src="./${versionedAppName}"`);
-if (versionedHtml === sourceHtml) throw new Error("Could not version the Pages application script.");
+const versionedHtml = sourceHtml
+  .replace('src="./app.js"', `src="./${versionedAppName}"`)
+  .replace(
+    '<span class="version" data-revision>main · live preview</span>',
+    `<span class="version" data-revision>main · ${revision.slice(0, 12)}</span>`,
+  );
+if (versionedHtml === sourceHtml || !versionedHtml.includes(`main · ${revision.slice(0, 12)}`)) {
+  throw new Error("Could not version the Pages application script and revision label.");
+}
 await writeFile(resolve(output, "index.html"), versionedHtml);
 
 console.log(JSON.stringify({ output, revision, versionedAppName }));

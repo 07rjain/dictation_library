@@ -17,7 +17,7 @@ The website uses the same `groq-dictation-kit` library, built from the current r
 To test the current website:
 
 1. Paste a Groq API key into **Your Groq key**. A reload intentionally clears it, so it must be entered again after refreshing.
-2. Leave **Live partials** off for the original record-then-transcribe flow, or enable it for transcript updates about every five seconds.
+2. Leave **Live partials** off for the original record-then-transcribe flow, or enable it for overlapping transcript updates about every ten seconds.
 3. Select **Start dictating**, allow microphone access, speak, then select **Stop & transcribe** or **Stop & finish**.
 4. If microphone permission was previously denied, restore it in the browser's site settings and reload the page.
 
@@ -28,7 +28,7 @@ The Pages deployment builds the current library source and serves content-addres
 - npm: [`groq-dictation-kit`](https://www.npmjs.com/package/groq-dictation-kit)
 - Live website: [`07rjain.github.io/dictation_library`](https://07rjain.github.io/dictation_library/)
 - Source and issues: [`07rjain/dictation_library`](https://github.com/07rjain/dictation_library)
-- Current release: [`v0.3.0`](https://github.com/07rjain/dictation_library/releases/tag/v0.3.0)
+- Registry release: [`v0.3.0`](https://github.com/07rjain/dictation_library/releases/tag/v0.3.0); this working tree prepares `v0.4.0`
 - Runtime: ESM with bundled TypeScript declarations; Node.js 20 or newer
 - License: MIT
 
@@ -83,18 +83,32 @@ const session = pipeline.startLiveConversation({
     }
   },
 });
+let recorderError: unknown;
 const recorder = new BrowserLiveRecorder({
   windowMs: 10_000,
+  overlapMs: 500,
   onWindow: (audio) => session.push(audio),
+  onError(error) {
+    // Keep one finalization owner; stop() settles after this callback returns.
+    recorderError = error;
+  },
 });
 
 await recorder.start();
 // The user speaks; completed windows are transcribed as recording continues.
-await recorder.stop();
+try {
+  await recorder.stop();
+} catch (error) {
+  // A recorder failure is reported through both onError and stop().
+  if (error !== recorderError) throw error;
+}
 const final = await session.finish();
+if (recorderError) console.warn(recorderError, final.text);
 ```
 
-The default 10-second window matches Groq's minimum billed audio length. Smaller windows reduce visible latency but increase request count and may cost more. This is near-live micro-batching, not token-by-token streaming; speaker diarization is not inferred by this API.
+The default 10-second window matches Groq's minimum billed audio length. Adjacent windows share 500 ms of audio and the session removes only overlap explicitly declared by the recorder. `recorder.isRecording` remains true while terminal window delivery and `onError` are settling, so a new capture cannot start against a session that is still draining. Recorder and session backpressure protect different boundaries: the recorder bounds encoded blobs waiting for `onWindow`, while the session bounds direct `push()` callers. Both default to four pending windows and 32 MiB, with `LIVE_BACKPRESSURE_LIMIT` returned when a consumer cannot keep up. Browsers that reject simultaneous `MediaRecorder` instances automatically fall back to sequential self-contained windows.
+
+Live output is raw by default. Enable `cleanup: { mode: "dictation" }` or `cleanup: { mode: "verbatim" }` explicitly; cleanup is split into bounded sections and any rejected section restores the complete canonical raw transcript. Smaller recording windows reduce visible latency but increase request count and may cost more. This is near-live micro-batching, not token-by-token streaming; speaker diarization is not inferred by this API.
 
 ## Pipeline
 
@@ -175,12 +189,15 @@ npm install
 npm test
 # Equivalent explicit CI gate:
 npm run test:regression
+npm run test:browser
 npm run benchmark:long
 npm audit --omit=dev
 npm pack --dry-run
 ```
 
-`npm test` builds the TypeScript package and runs the deterministic suite without contacting Groq. It covers short and near-live transcription, cumulative partials, configuration precedence, retries/timeouts, codec-safe chunking, overlap stitching, cleanup guards and windows, long-job progress/resume/abort/source matching, storage deletion, Batch lifecycle, adapter permissions, and FFmpeg normalization when FFmpeg is installed.
+`npm test` builds the TypeScript package and runs the deterministic suite without contacting Groq. It covers short and near-live transcription, bounded backpressure, conservative unspaced-script boundaries, recorder cancellation/error ordering, configuration precedence, retries/timeouts, codec-safe chunking, timestamp-proven stitching, cleanup guards and windows, long-job request identity/leases/provider outcomes/resume/abort, storage deletion, Batch lifecycle/recovery, adapter permissions, and FFmpeg normalization when FFmpeg is installed.
+
+`npm run test:browser` uses the real browser `MediaRecorder` and Web Audio decoder in Chromium, Firefox, WebKit/iOS emulation, and Chromium/Android emulation. A continuous synthetic audio source crosses a rotation boundary, and every emitted window must decode independently. GitHub Actions runs this matrix on every push and pull request.
 
 Use `npm run test:live` only when you intentionally want a real provider request. Live credentials are never required for the deterministic suite.
 
@@ -234,9 +251,9 @@ const result = await pipeline.dictateAuto(audio, {
 });
 ```
 
-The built-in browser-compatible long-audio processor accepts PCM WAV. Compressed WebM/Opus from `BrowserRecorder` needs the Node.js FFmpeg processor (or your own `AudioProcessor`) once automatic routing selects the chunked path.
+The built-in browser-compatible long-audio processor accepts PCM WAV. Compressed WebM/Opus from `BrowserRecorder` needs the Node.js FFmpeg processor (or your own `AudioProcessor`) once a chunked path is selected. All long-audio entry points check processor compatibility before segmentation and return `LONG_AUDIO_PROCESSOR_REQUIRED` with format details instead of failing later with a misleading WAV error.
 
-`routeAudio(audio, policy)` exposes the same decision without executing it. Its possible decisions are `direct`, `stored-url`, `chunked`, and `batch`; URL and Batch execution remain explicit because they require storage and retention choices.
+`routeAudio(audio, policy)` exposes the same decision without executing it. Automatic routing selects only executable `direct` and `chunked` paths by default. Set `allowManualRoutes: true` only in planning code that understands the conceptual `stored-url` and `batch` decisions; `dictateAuto` deliberately does not pretend it can upload, refresh signed URLs, or run a Batch lifecycle for you.
 
 ```ts
 const result = await pipeline.dictateLong(
@@ -297,7 +314,7 @@ const result = await resumed.result();
 
 When a job is partial, `CHUNK_TRANSCRIPTION_FAILED.details` includes the completed chunks and a best-effort partial transcript. `job.inspect()` exposes the complete durable manifest. Segment timestamps returned in the final result are offset to the absolute recording timeline.
 
-Reusing a job ID with different source audio fails with `JOB_SOURCE_MISMATCH`, including after the original job has completed. This prevents a cached transcript from being associated with the wrong recording.
+Reusing a job ID with different source audio fails with `JOB_SOURCE_MISMATCH`, including after the original job has completed. Changing the model, prompt, language, preprocessing, time range, or response/timestamp options fails with `JOB_CONFIGURATION_MISMATCH` instead of silently reusing stale chunks. Each chunk has a content-addressed request key; manifests separately record logical chunk attempts, provider attempts, and timeout/network outcomes whose provider billing status is unknown.
 
 The default `MemoryJobStore` survives within one pipeline process. For restart recovery on a Node.js host:
 
@@ -310,9 +327,24 @@ const processor = new FfmpegAudioProcessor();
 const job = pipeline.createJob(audio, { store, processor });
 ```
 
-For horizontally scaled production systems, implement the exported `JobStore` interface using your database. Manifests include a bounded content fingerprint and reject mismatched resume audio.
+For horizontally scaled production systems, implement the exported `JobStore` interface using your database, including its expiring lease methods. `MemoryJobStore` and `FileJobStore` already prevent concurrent workers from processing the same job; the file adapter serializes lease takeover, renewal, and release across processes on one host. Long-job manifests include durable cursor-addressed lifecycle events and a full SHA-256 content identity. Large sources are hashed incrementally; WAV boundaries read only bounded slices; the Node FFmpeg adapter streams the source Blob to its private temporary file. Durable long jobs require Web Crypto availability and fail with `DURABLE_IDENTITY_UNAVAILABLE` when it is unavailable.
+
+Pre-`0.4` manifests without a configuration identity are rejected with `JOB_LEGACY_MIGRATION_REQUIRED`. After verifying that the stored job options match, opt into a one-time migration with `migrateLegacyManifest: true`. Migration validates the legacy source fingerprint, upgrades it to full SHA-256, creates the configuration identity, and adds missing stitch provenance to cached results.
+
+Groq `Retry-After` delays are honored without the local backoff cap. A 429 multiplicatively lowers future long-job concurrency; sustained successful requests then restore it additively up to the configured maximum. Groq quota headers are exposed on provider-attempt telemetry and dynamically pace later queued chunks across the reported reset window. Long jobs emit `concurrency.reduced`, `concurrency.increased`, and `rate-limit.observed`. Stitching requests segment timestamps and removes text only when it is proven to belong to the declared audio overlap. Uncertain lexical repetition is preserved; `result.stitching` records confidence, provenance, and alternatives for every decision.
+
+Every long-job event has a durable `cursor` and timestamp. Resume an event consumer without replaying already handled events:
+
+```ts
+for await (const event of job.events(lastStoredCursor)) {
+  lastStoredCursor = event.cursor;
+  await persistEvent(event);
+}
+```
 
 ## URL and private object-storage transcription
+
+These are explicit, manual integration APIs. `ObjectStorage.put()` receives an optional resume token, abort signal, and progress callback; adapters can return immutable versions, checksums, resumed byte counts, and a new resume token. `onStorageEvent` reports upload, transcription, and deletion completion/failure. The package remains provider-neutral: multipart implementation, upload-while-recording, signed-URL refresh, durable upload state, retention, and audit storage belong in the application adapter. Supplying `durationMs` enables an adaptive provider timeout.
 
 Groq accepts an HTTPS `url` instead of a multipart attachment:
 
@@ -327,10 +359,12 @@ Or implement `ObjectStorage` and let the pipeline upload, sign, transcribe, and 
 ```ts
 const transcription = await pipeline.transcribeStored(audio, storage, {
   signedUrlExpiresInSeconds: 300,
+  uploadResumeToken: previousResumeToken,
+  onStorageEvent: (event) => persistAuditEvent(event),
 });
 ```
 
-URL ingestion is not treated as unlimited. Applications should still chunk audio above the account limit or when they need progress and recovery.
+URL ingestion is not treated as unlimited. Applications should still chunk audio above the account limit or when they need progress and recovery. Live verification on 2026-08-10 showed that Groq fetched a direct `raw.githubusercontent.com` WAV but rejected a GitHub URL returning HTTP 302; pass a final direct object URL, not a redirecting share page.
 
 ## Background Batch transcription
 
@@ -339,12 +373,16 @@ Batch is for asynchronous workloads, not interactive dictation. It requires HTTP
 ```ts
 const batch = await pipeline.batches.submitAudio([
   { id: "meeting-001", url: signedAudioUrl, language: "en" },
-]);
+], { experimental: true });
 
 const completed = await pipeline.batches.wait(batch.id);
 const lines = await pipeline.batches.results(completed);
 await pipeline.batches.deleteArtifacts(completed);
 ```
+
+Audio Batch is feature-gated and every submission requires `{ experimental: true }`. `runAudio()` provides submit/wait/result/artifact-cleanup orchestration. For a failed or expired job, `recoverIncomplete()` reads any available output/error artifacts and resubmits only failed or missing `custom_id` values; if no artifact exists, every original request is unresolved. Provider submission POSTs are never automatically replayed after an unknown timeout.
+
+The manual `test:batch:live` workflow validates the real account/API schema with one URL and deletes input, output, and error artifacts. Configure repository secrets `GROQ_API_KEY` and `GROQ_BATCH_AUDIO_URL`, then explicitly dispatch the workflow with `RUN_BATCH`.
 
 Set `zeroDataRetention: true` on `DictationPipeline` to make Batch calls fail locally with `BATCH_DISABLED_FOR_ZDR`.
 
@@ -373,10 +411,27 @@ Common recovery paths:
 - `AUDIO_PROCESSING_UNAVAILABLE`: supply a processor that supports the input codec; use `FfmpegAudioProcessor` on Node.js.
 - `CHUNK_TRANSCRIPTION_FAILED`: preserve the job ID and resume with the same audio, store, processor, and chunk layout.
 - `JOB_SOURCE_MISMATCH`: do not reuse that job ID for a different recording.
+- `JOB_LEGACY_MIGRATION_REQUIRED`: verify the old job configuration, then explicitly resume once with `migrateLegacyManifest: true`.
+- `DURABLE_IDENTITY_UNAVAILABLE`: run long jobs in a secure browser context or a supported Node.js runtime with Web Crypto.
 - `RATE_LIMITED`: lower concurrency or set `requestsPerMinute` below the account allowance.
 - `REQUEST_TIMEOUT`: retry safely; completed long-job chunks remain reusable.
 - `INSECURE_AUDIO_URL`: issue a short-lived HTTPS URL.
+- `BATCH_EXPERIMENTAL_DISABLED`: explicitly acknowledge the manual audio Batch API with `{ experimental: true }`.
 - `BATCH_DISABLED_FOR_ZDR`: use the interactive or URL path when strict zero-data retention is required.
+
+Retryable requests treat Groq's `Retry-After` as authoritative; both numeric-seconds and HTTP-date values are supported. When that header is absent, the library uses exponential backoff with jitter capped by `retry.maxDelayMs`—5,000 ms by default:
+
+```ts
+const pipeline = new DictationPipeline({
+  apiKey,
+  retry: { maxAttempts: 3, maxDelayMs: 5_000 },
+});
+```
+
+Batch GET/DELETE operations use the same retry policy and a per-request timeout. Submission,
+upload, and cancellation POSTs are not replayed automatically because a timed-out request can
+have an unknown provider outcome. `pipeline.batches.wait(id, { timeoutMs, signal })` also supports
+an overall polling deadline, and `deleteArtifacts()` reports any file IDs that could not be removed.
 
 ## Cleanup safety modes
 
@@ -385,7 +440,7 @@ Common recovery paths:
 - `none`: returns the canonical Whisper transcript; this is the long-audio default.
 - `summary`: produces an explicitly requested summary rather than pretending it is a transcript.
 
-For non-summary cleanup, deletion, expansion, numbers, URLs, emails, and digit-bearing identifiers are guarded. Rejected cleanup returns the original window and sets `cleanupRejected`.
+For non-summary cleanup, mode-specific deletion/expansion limits, numbers, URLs, emails, digit-bearing identifiers, likely named entities, and caller-supplied `stableSegments` are guarded. `verbatim` is stricter than `dictation`; explicit ratio overrides remain supported. Every cleanup returns a deterministic guard ID, reasons, changed stable-segment IDs, bounded word diff, and measured ratios. Long and live results expose `cleanupWindows`, and their event streams report each accepted or rejected window. If any bounded window is rejected, the complete canonical raw transcript is returned and accepted/rejected text is never mixed.
 
 Long cleanup runs in bounded windows instead of sending an entire meeting to one completion request.
 
@@ -395,7 +450,17 @@ Long cleanup runs in bounded windows instead of sending an entire meeting to one
 - `retry-ambiguous`: default; independently transcribes chunks, then retries only low-confidence boundaries with a bounded tail of prior context.
 - `sequential`: concurrency one with previous context for accuracy-sensitive workloads.
 
-`VadWavAudioProcessor` can move PCM WAV boundaries toward quiet frames without removing any part of the audio timeline.
+`VadWavAudioProcessor` can move PCM WAV boundaries toward quiet RMS frames without removing any part of the audio timeline. For learned speech detection, install the optional runtime with `npm install @ricky0123/vad-web`, then pass an initialized `NonRealTimeVAD` instance to `SileroVadWavAudioProcessor`; it evaluates only the bounded boundary-search window, not the complete recording:
+
+```ts
+import { NonRealTimeVAD } from "@ricky0123/vad-web";
+import { SileroVadWavAudioProcessor } from "groq-dictation-kit";
+
+const processor = new SileroVadWavAudioProcessor(await NonRealTimeVAD.new());
+const result = await pipeline.dictateLong(audio, { processor });
+```
+
+The Silero package and ONNX assets remain optional and are not bundled into this provider-neutral library.
 
 ## Hide context latency while the user speaks
 
@@ -472,6 +537,15 @@ GROQ_API_KEY=your_key npm run test:long:live -- /absolute/path/to/ten-minute-aud
 
 This can make many provider requests. Review the chunk count and account limits before running it. See [BENCHMARKS.md](./BENCHMARKS.md) for methodology and the latest local results.
 
+Provider-size, duration, raw-URL, redirect, signed-URL, range, and fetch-timeout behavior can be rechecked with the manual `Provider boundary verification` workflow or locally:
+
+```bash
+GROQ_API_KEY=your_key npm run test:boundaries:live -- --direct-25 --urls
+GROQ_API_KEY=your_key npm run test:boundaries:live -- --duration
+```
+
+The optional 100 MiB URL probes upload generated silence only and are deliberately manual because they transfer hundreds of megabytes. Signed-URL expiry, range-required origins, and slow-fetch behavior require controlled URLs supplied through the workflow secrets documented in `.github/workflows/provider-boundaries.yml`.
+
 The GitHub Actions workflow `Manual 10-minute Groq benchmark` provides the same check using the repository secret. It runs only through `workflow_dispatch` and only when its confirmation input is exactly `RUN_LONG`; ordinary pushes never trigger it.
 
 The repository's `Live Groq smoke test` GitHub Actions workflow replays `test.wav` through `LiveConversationSession` after every push to `main`. GitHub runners have no microphone, so a committed spoken fixture is the reproducible equivalent of one captured live window. The fixture says “Hello, um, this is a live test,” and the workflow verifies the partial, raw, and cleaned results, including removal of the filler word. It reads `GROQ_API_KEY` from GitHub Actions secrets and is intentionally not triggered for pull requests, so forked code cannot access the credential. Because this makes live Groq requests, each `main` push consumes a small amount of the account's quota.
@@ -484,7 +558,7 @@ The repository's `Live Groq smoke test` GitHub Actions workflow replays `test.wa
 - `BrowserRecorder`: microphone capture through the MediaRecorder API.
 - `BrowserLiveRecorder` / `LiveConversationSession`: independently playable microphone windows and ordered near-live partial transcripts.
 - `LongJob`: progress, partial failure, resumption, and results for chunked audio.
-- `WavAudioProcessor` / `VadWavAudioProcessor`: browser-compatible PCM WAV segmentation.
+- `WavAudioProcessor` / `VadWavAudioProcessor` / `SileroVadWavAudioProcessor`: bounded-memory PCM WAV segmentation with fixed, energy-based, or learned boundaries.
 - `FfmpegAudioProcessor` / `FileJobStore`: Node-only adapters from `groq-dictation-kit/node`.
 - `GroqBatchClient`: asynchronous URL-based audio Batch jobs.
 - `DictationError`: typed errors with stable `code` and optional HTTP `status`.

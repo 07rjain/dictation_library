@@ -1,0 +1,56 @@
+name: Manual Groq provider-boundary verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Probe scope: safe, duration, or all (all uploads ~250 MiB)"
+        required: true
+        default: safe
+        type: choice
+        options: [safe, duration, all]
+      account_tier:
+        description: "Groq account tier used by this secret"
+        required: true
+        default: developer
+        type: choice
+        options: [free, developer]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-boundaries-groq
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.repository == '07rjain/dictation_library'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_ACCOUNT_TIER: ${{ inputs.account_tier }}
+      GROQ_BOUNDARY_URL: ${{ secrets.GROQ_BOUNDARY_URL }}
+      GROQ_LONG_DURATION_URL: ${{ secrets.GROQ_LONG_DURATION_URL }}
+      GROQ_EXPIRED_SIGNED_URL: ${{ secrets.GROQ_EXPIRED_SIGNED_URL }}
+      GROQ_REDIRECT_URL: ${{ secrets.GROQ_REDIRECT_URL }}
+      GROQ_RANGE_URL: ${{ secrets.GROQ_RANGE_URL }}
+      GROQ_FETCH_TIMEOUT_URL: ${{ secrets.GROQ_FETCH_TIMEOUT_URL }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Probe multipart, public URL, and redirect behavior
+        if: inputs.scope == 'safe'
+        run: npm run test:boundaries:live -- --direct-25 --urls
+      - name: Probe ten-minute duration behavior
+        if: inputs.scope == 'duration'
+        run: npm run test:boundaries:live -- --duration
+      - name: Probe all configured boundaries
+        if: inputs.scope == 'all'
+        run: npm run test:boundaries:live -- --all
